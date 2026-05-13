@@ -3,27 +3,37 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "scripts": {
-    "clean": "echo 'nothing to clean'",
+    "clean": "rm -rf dist",
     "build": "echo 'nothing to build'",
-    "check": "echo 'nothing to check'"
+    "check": "npx biome check src/",
+    "lint": "npx biome lint src/",
+    "format": "npx biome format --write src/",
+    "test": "npx vitest run",
+    "typecheck": "npx tsc --noEmit"
   },
   "pi": {
-    "extensions": ["./src/index.ts"]
+    "extensions": [
+      "./src/index.ts"
+    ]
   },
   "dependencies": {
-    "turndown": "^7.2.0",
-    "turndown-plugin-gfm": "^1.0.2",
     "@mozilla/readability": "^0.6.0",
-    "jsdom": "^26.0.0"
+    "jsdom": "^26.0.0",
+    "turndown": "^7.2.0",
+    "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
-    "@types/turndown": "^5.0.5"
+    "@types/jsdom": "^28.0.3",
+    "@types/turndown": "^5.0.5",
+    "vitest": "^4.1.6"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"

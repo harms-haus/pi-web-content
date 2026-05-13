@@ -4,60 +4,100 @@
  * Fetches a URL, converts HTML to markdown, optionally summarizes via pi subagent.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-  truncateHead,
-  formatSize,
-  DEFAULT_MAX_BYTES,
-  DEFAULT_MAX_LINES,
-} from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Text } from "@earendil-works/pi-tui";
-import { Readability } from "@mozilla/readability";
-import { JSDOM } from "jsdom";
-import TurndownService from "turndown";
-import { gfm } from "turndown-plugin-gfm";
 import { mkdtemp, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runSubagent } from "./subagent.js";
+import { join } from "node:path";
+import type { AgentToolUpdateCallback, ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
+import { BINARY_TYPES, htmlToMarkdown } from "./html-to-markdown.js";
+import { validateRedirectForSsrf, validateUrlForSsrf } from "./ssrf.js";
+import { summarizeWithSubagent } from "./summarize.js";
+import { renderToolCall, renderToolResult } from "./tool-renderers.js";
 
-const BLOCKED_HOSTNAMES = [
-  "localhost",
-  "127.0.0.1",
-  "0.0.0.0",
-  "[::1]",
-];
+// --- Module-level constants ---
 
-const BLOCKED_HOSTNAME_PREFIXES = [
-  "10.",
-  "172.16.", "172.17.", "172.18.", "172.19.",
-  "172.20.", "172.21.", "172.22.", "172.23.",
-  "172.24.", "172.25.", "172.26.", "172.27.",
-  "172.28.", "172.29.", "172.30.", "172.31.",
-  "192.168.",
-  "169.254.",
-];
+/** Timeout for fetch requests (30 seconds) */
+const FETCH_TIMEOUT_MS = 30_000;
 
-function isBlockedHostname(hostname: string): boolean {
-  const lower = hostname.toLowerCase();
-  if (BLOCKED_HOSTNAMES.includes(lower)) return true;
-  if (BLOCKED_HOSTNAME_PREFIXES.some((p) => lower.startsWith(p))) return true;
-  return false;
+/** Maximum allowed response size (10 MB) */
+const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
+
+/** Maximum number of redirects to follow */
+const MAX_REDIRECTS = 10;
+
+/** User-Agent header for fetch requests */
+const USER_AGENT =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
+/** Accept header for fetch requests */
+const ACCEPT_HEADER = "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8";
+
+/** Accept-Language header for fetch requests */
+const ACCEPT_LANGUAGE = "en-US,en;q=0.9";
+
+// --- Helper functions ---
+
+/**
+ * Reads a response body using streaming, aborting if the total size exceeds
+ * the given limit. This prevents memory issues from oversized responses
+ * regardless of Content-Length header presence or accuracy.
+ */
+async function readResponseWithSizeLimit(response: Response, maxBytes: number): Promise<string> {
+  const body = response.body;
+  if (!body) {
+    // Fallback: empty body or already consumed
+    return "";
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        throw new Error(
+          `Response body exceeds maximum size of ${(maxBytes / 1024 / 1024).toFixed(0)} MB. Reading was aborted.`,
+        );
+      }
+
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  // Concatenate all chunks
+  const combined = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  // Decode to string
+  return new TextDecoder().decode(combined);
 }
 
-const BINARY_TYPES = [
-  "image/",
-  "video/",
-  "audio/",
-  "application/pdf",
-  "application/zip",
-  "application/octet-stream",
-  "application/x-gzip",
-  "application/x-tar",
-];
+/** Structured details returned by fetch-content tool */
+interface FetchContentDetails {
+  url?: string;
+  title?: string;
+  summarized?: boolean;
+  summarizePrompt?: string;
+  contentLength?: number;
+  truncated?: boolean;
+  fullOutputPath?: string;
+  status?: string;
+}
 
-export function createFetchContentTool(pi: ExtensionAPI) {
+export function createFetchContentTool(_pi: ExtensionAPI) {
   return {
     name: "fetch-content",
     label: "Fetch Content",
@@ -83,33 +123,21 @@ export function createFetchContentTool(pi: ExtensionAPI) {
     }),
 
     async execute(
-      _toolCallId: string,
+      _toolCallId: string, // Required by tool interface; not used internally
       params: { url: string; summarize?: string },
       signal: AbortSignal | undefined,
-      onUpdate: any,
-      ctx: any,
+      onUpdate: AgentToolUpdateCallback<FetchContentDetails> | undefined,
+      ctx: ExtensionContext,
     ) {
       const { url, summarize } = params;
 
       // Validate URL
       if (!/^https?:\/\//i.test(url)) {
-        throw new Error(
-          `Invalid URL: must start with http:// or https://. Got: ${url}`,
-        );
+        throw new Error(`Invalid URL: must start with http:// or https://. Got: ${url}`);
       }
 
-      // SSRF protection: block internal/private addresses
-      try {
-        const parsed = new URL(url);
-        if (isBlockedHostname(parsed.hostname)) {
-          throw new Error(
-            `Blocked: cannot fetch internal/private addresses (${parsed.hostname}).`,
-          );
-        }
-      } catch (err) {
-        if ((err as Error).message?.startsWith("Blocked:")) throw err;
-        throw new Error(`Invalid URL: ${url}`);
-      }
+      // SSRF protection: validate URL against internal/private addresses
+      await validateUrlForSsrf(url);
 
       // Streaming: fetching
       onUpdate?.({
@@ -117,50 +145,66 @@ export function createFetchContentTool(pi: ExtensionAPI) {
         details: { status: "fetching" },
       });
 
-      // Fetch
-      let response: Response;
+      // Fetch with manual redirect following (SSRF protection)
+      let currentUrl = url;
+      let response: Response | undefined;
       try {
-        const timeoutSignal = AbortSignal.timeout(30_000);
-        const signals = signal
-          ? AbortSignal.any([signal, timeoutSignal])
-          : timeoutSignal;
+        const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+        const signals = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 
-        response = await fetch(url, {
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-            Accept:
-              "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-          },
-          redirect: "follow",
-          signal: signals,
-        });
-      } catch (err: any) {
-        if (err.name === "AbortError" || signal?.aborted) {
-          throw new Error(`Fetch cancelled for ${url}`);
+        for (let i = 0; i <= MAX_REDIRECTS; i++) {
+          response = await fetch(currentUrl, {
+            headers: {
+              "User-Agent": USER_AGENT,
+              Accept: ACCEPT_HEADER,
+              "Accept-Language": ACCEPT_LANGUAGE,
+            },
+            redirect: "manual",
+            signal: signals,
+          });
+
+          if (response.status >= 300 && response.status < 400) {
+            const location = response.headers.get("location");
+            if (!location) {
+              throw new Error(`Redirect with no Location header from ${currentUrl}`);
+            }
+            const redirectUrl = new URL(location, currentUrl);
+            await validateRedirectForSsrf(new URL(currentUrl), redirectUrl);
+            currentUrl = redirectUrl.href;
+            continue;
+          }
+          break;
         }
-        throw new Error(`Failed to fetch ${url}: ${err.message}`);
+      } catch (err: unknown) {
+        // Re-throw SSRF blocks and abort errors as-is; wrap all other errors
+        if (err instanceof Error) {
+          if (err.message.startsWith("Blocked:")) throw err;
+          if (err.name === "AbortError" || signal?.aborted) {
+            throw new Error(`Fetch cancelled for ${url}`);
+          }
+          throw new Error(`Failed to fetch ${url}: ${err.message}`);
+        }
+        throw new Error(`Failed to fetch ${url}: ${String(err)}`);
       }
 
-      if (!response.ok) {
-        throw new Error(
-          `HTTP ${response.status} ${response.statusText} for ${url}`,
-        );
+      // TypeScript narrowing: response is guaranteed defined after the try/catch
+      // because the loop always assigns it at least once and throws on errors.
+      if (!response) {
+        throw new Error(`Fetch failed for ${url}: no response received`);
+      }
+      const resolvedResponse = response;
+
+      if (!resolvedResponse.ok) {
+        throw new Error(`HTTP ${resolvedResponse.status} ${resolvedResponse.statusText} for ${url}`);
       }
 
-      const finalUrl = response.url;
-      const contentType = response.headers.get("content-type") || "";
+      const finalUrl = resolvedResponse.url;
+      const contentType = resolvedResponse.headers.get("content-type") || "";
 
-      // Reject very large responses to avoid memory issues
-      const contentLength = response.headers.get("content-length");
-      if (contentLength && parseInt(contentLength, 10) > 10 * 1024 * 1024) {
-        throw new Error(
-          `Response too large (${(parseInt(contentLength, 10) / 1024 / 1024).toFixed(1)} MB). Maximum is 10 MB.`,
-        );
-      }
-
-      const rawText = await response.text();
+      // Read response body with size limit using streaming.
+      // This is more robust than checking Content-Length (which can be spoofed
+      // or absent with chunked transfer encoding).
+      const rawText = await readResponseWithSizeLimit(resolvedResponse, MAX_RESPONSE_BYTES);
 
       // Reject binary content
       if (BINARY_TYPES.some((t) => contentType.includes(t))) {
@@ -176,20 +220,12 @@ export function createFetchContentTool(pi: ExtensionAPI) {
       if (contentType.includes("application/json")) {
         title = "JSON Response";
         markdown = `# JSON Response from ${finalUrl}\n\n\`\`\`json\n${rawText}\n\`\`\``;
-      } else if (
-        contentType.includes("text/plain") ||
-        contentType.includes("text/csv")
-      ) {
+      } else if (contentType.includes("text/plain") || contentType.includes("text/csv")) {
         title = "Text Response";
         markdown = `# Content from ${finalUrl}\n\n\`\`\`\n${rawText}\n\`\`\``;
-      } else if (
-        contentType.includes("text/html") ||
-        contentType.includes("application/xhtml")
-      ) {
+      } else if (contentType.includes("text/html") || contentType.includes("application/xhtml")) {
         onUpdate?.({
-          content: [
-            { type: "text", text: "Converting HTML to markdown..." },
-          ],
+          content: [{ type: "text", text: "Converting HTML to markdown..." }],
           details: { status: "converting" },
         });
 
@@ -203,47 +239,27 @@ export function createFetchContentTool(pi: ExtensionAPI) {
 
       // Summarization
       if (summarize) {
-        onUpdate?.({
-          content: [{ type: "text", text: "Summarizing content..." }],
-          details: { status: "summarizing" },
+        const subResult = await summarizeWithSubagent({
+          content: markdown,
+          summarize,
+          roleContext: "You are summarizing content from a web page.",
+          url: finalUrl,
+          title,
+          cwd: ctx.cwd,
+          signal,
+          // Cast to match summarizeWithSubagent's expected callback type
+          onUpdate: onUpdate as
+            | ((update: { content: Array<{ type: string; text: string }>; details: { status: string } }) => void)
+            | undefined,
         });
 
-        const delimiter = `---CONTENT_BOUNDARY_${Date.now()}_${Math.random().toString(36).slice(2)}---`;
-        const taskPrompt = [
-          "You are summarizing content from a web page.",
-          `URL: ${finalUrl}`,
-          title ? `Title: ${title}` : "",
-          "",
-          delimiter,
-          markdown,
-          delimiter,
-          "",
-          `User's instruction: ${summarize}`,
-          "",
-          "Provide a focused response based on the user's instruction above.",
-        ]
-          .filter(Boolean)
-          .join("\n");
-
-        const subResult = await runSubagent(taskPrompt, ctx.cwd, signal);
-
-        if (subResult.error) {
-          throw new Error(`Summarization failed: ${subResult.error}`);
-        }
-
         return {
-          content: [
-            {
-              type: "text",
-              text:
-                subResult.text || "(no summary produced)",
-            },
-          ],
+          content: subResult.content,
           details: {
             url: finalUrl,
             title,
             summarized: true,
-            summarizePrompt: summarize,
+            summarizePrompt: subResult.summarizePrompt,
             contentLength: markdown.length,
           },
         };
@@ -259,6 +275,10 @@ export function createFetchContentTool(pi: ExtensionAPI) {
       let fullOutputPath: string | undefined;
 
       if (truncation.truncated) {
+        // NOTE: Temp file is intentionally NOT cleaned up here. The file path
+        // is returned in `fullOutputPath` so the agent/user can access the full
+        // output later. Cleanup is deferred to the OS (tmpdir) or a separate
+        // maintenance process.
         const tempDir = await mkdtemp(join(tmpdir(), "pi-fetch-"));
         fullOutputPath = join(tempDir, "content.md");
         await writeFile(fullOutputPath, markdown, "utf8");
@@ -266,9 +286,7 @@ export function createFetchContentTool(pi: ExtensionAPI) {
       }
 
       // Return full markdown
-      const header = title
-        ? `# ${title}\n\n**Source:** ${finalUrl}\n\n`
-        : `**Source:** ${finalUrl}\n\n`;
+      const header = title ? `# ${title}\n\n**Source:** ${finalUrl}\n\n` : `**Source:** ${finalUrl}\n\n`;
 
       return {
         content: [{ type: "text", text: header + resultText }],
@@ -283,97 +301,24 @@ export function createFetchContentTool(pi: ExtensionAPI) {
       };
     },
 
-    renderCall(args: any, theme: any) {
-      const url: string = args.url || "...";
-      const shortUrl =
-        url.length > 60 ? `${url.slice(0, 57)}...` : url;
-      let text = theme.fg("toolTitle", theme.bold("fetch-content "));
-      text += theme.fg("accent", shortUrl);
-      if (args.summarize) {
-        const preview =
-          args.summarize.length > 40
-            ? `${args.summarize.slice(0, 37)}...`
-            : args.summarize;
-        text += theme.fg("dim", ` — ${preview}`);
-      }
+    renderCall(args: { url?: string; summarize?: string }, theme: Theme) {
+      const text = renderToolCall("fetch-content", { url: args.url, summarize: args.summarize }, theme);
       return new Text(text, 0, 0);
     },
 
-    renderResult(result: any, { isPartial }: any, theme: any) {
-      if (isPartial) {
-        return new Text(theme.fg("warning", "Processing..."), 0, 0);
-      }
-      const details = result.details as any;
-      const icon = result.isError
-        ? theme.fg("error", "✗")
-        : theme.fg("success", "✓");
-      let text = icon;
-
-      if (details?.url) {
-        text += " " + theme.fg("accent", details.url);
-      }
-      if (details?.title) {
-        text += " " + theme.fg("dim", `— ${details.title}`);
-      }
-      if (details?.summarized) {
-        text += " " + theme.fg("muted", "(summarized)");
-      }
-      if (details?.truncated) {
-        text += " " + theme.fg("warning", "(truncated)");
-      }
-      if (details?.contentLength) {
-        text +=
-          " " + theme.fg("dim", `(${formatSize(details.contentLength)})`);
-      }
+    renderResult(
+      result: { content: Array<{ type: string; text?: string }>; details?: FetchContentDetails; isError?: boolean },
+      { isPartial }: { isPartial?: boolean },
+      theme: Theme,
+    ) {
+      const details = result.details;
+      const text = renderToolResult(result, details as unknown as Record<string, unknown>, { isPartial }, theme, {
+        showUrl: details?.url,
+        showTruncated: details?.truncated,
+        showSummarized: details?.summarized,
+        showContentLength: details?.contentLength,
+      });
       return new Text(text, 0, 0);
     },
   };
-}
-
-// --- Helper: HTML to Markdown ---
-
-interface HtmlToMarkdownResult {
-  title: string;
-  markdown: string;
-}
-
-function htmlToMarkdown(html: string, url: string): HtmlToMarkdownResult {
-  const dom = new JSDOM(html, { url });
-  const reader = new Readability(dom.window.document);
-  const article = reader.parse();
-
-  const turndownService = new TurndownService({
-    headingStyle: "atx",
-    codeBlockStyle: "fenced",
-    bulletListMarker: "-",
-    emDelimiter: "*",
-    strongDelimiter: "**",
-  });
-
-  // Enable GFM tables, strikethrough, task lists
-  turndownService.use(gfm);
-
-  // Remove noise elements
-  turndownService.remove(["script", "style", "iframe", "noscript"]);
-
-  let title: string;
-  let contentHtml: string;
-
-  if (article) {
-    title = article.title || url;
-    contentHtml = article.content;
-  } else {
-    // Readability failed — probably not an article page.
-    // Fall back to converting the full body.
-    title = dom.window.document.title || url;
-    const body = dom.window.document.body;
-    contentHtml = body ? body.innerHTML : html;
-  }
-
-  const markdown = turndownService.turndown(contentHtml);
-
-  // Clean up jsdom window to free memory
-  dom.window.close();
-
-  return { title, markdown };
 }

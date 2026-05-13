@@ -10,6 +10,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 
+const SIGKILL_DELAY_MS = 5000;
+const MAX_STDERR_LENGTH = 64 * 1024; // 64KB cap
+
+interface SubagentEvent {
+  type: string;
+  message?: Message;
+}
+
 export interface SubagentResult {
   text: string;
   exitCode: number;
@@ -57,17 +65,15 @@ function getFinalOutput(messages: Message[]): string {
  * @param signal - AbortSignal for cancellation
  * @returns The assistant's final text output
  */
-export async function runSubagent(
-  task: string,
-  cwd: string,
-  signal?: AbortSignal,
-): Promise<SubagentResult> {
+export async function runSubagent(task: string, cwd: string, signal?: AbortSignal): Promise<SubagentResult> {
   const args: string[] = ["--mode", "json", "-p", "--no-session"];
   args.push(`Task: ${task}`);
 
   let wasAborted = false;
   const messages: Message[] = [];
-  let stderr = "";
+  const stderrChunks: string[] = [];
+  let stderrLength = 0;
+  let stderrTruncated = false;
 
   const exitCode = await new Promise<number>((resolve) => {
     const invocation = getPiInvocation(args);
@@ -81,17 +87,17 @@ export async function runSubagent(
 
     const processLine = (line: string) => {
       if (!line.trim()) return;
-      let event: any;
+      let event: SubagentEvent;
       try {
         event = JSON.parse(line);
       } catch {
         return;
       }
       if (event.type === "message_end" && event.message) {
-        messages.push(event.message as Message);
+        messages.push(event.message);
       }
       if (event.type === "tool_result_end" && event.message) {
-        messages.push(event.message as Message);
+        messages.push(event.message);
       }
     };
 
@@ -103,16 +109,30 @@ export async function runSubagent(
     });
 
     proc.stderr.on("data", (data: Buffer) => {
-      stderr += data.toString();
+      if (stderrTruncated) return;
+      const chunk = data.toString();
+      stderrChunks.push(chunk);
+      stderrLength += chunk.length;
+      if (stderrLength > MAX_STDERR_LENGTH) {
+        stderrTruncated = true;
+      }
+    });
+
+    proc.on("error", (err: Error) => {
+      if (!stderrTruncated) {
+        const msg = `Subagent process error: ${err.message}`;
+        stderrChunks.push(msg);
+        stderrLength += msg.length;
+        if (stderrLength > MAX_STDERR_LENGTH) {
+          stderrTruncated = true;
+        }
+      }
+      resolve(1);
     });
 
     proc.on("close", (code) => {
       if (buffer.trim()) processLine(buffer);
       resolve(code ?? 0);
-    });
-
-    proc.on("error", () => {
-      resolve(1);
     });
 
     if (signal) {
@@ -121,15 +141,24 @@ export async function runSubagent(
         proc.kill("SIGTERM");
         setTimeout(() => {
           if (!proc.killed) proc.kill("SIGKILL");
-        }, 5000);
+        }, SIGKILL_DELAY_MS);
       };
-      if (signal.aborted) killProc();
-      else signal.addEventListener("abort", killProc, { once: true });
+      if (signal.aborted) {
+        killProc();
+      } else {
+        signal.addEventListener("abort", killProc, { once: true });
+        proc.on("close", () => {
+          signal.removeEventListener("abort", killProc);
+        });
+      }
     }
   });
 
+  const stderr = stderrChunks.join("");
+  const finalStderr = stderrTruncated ? `${stderr.slice(0, MAX_STDERR_LENGTH)}\n[stderr truncated]` : stderr;
+
   if (wasAborted) {
-    return { text: "", exitCode, stderr, error: "Subagent was aborted" };
+    return { text: "", exitCode, stderr: finalStderr, error: "Subagent was aborted" };
   }
 
   const text = getFinalOutput(messages);
@@ -138,10 +167,10 @@ export async function runSubagent(
     return {
       text: "",
       exitCode,
-      stderr,
-      error: `Subagent exited with code ${exitCode}: ${stderr.trim() || "(no output)"}`,
+      stderr: finalStderr,
+      error: `Subagent exited with code ${exitCode}: ${finalStderr.trim() || "(no output)"}`,
     };
   }
 
-  return { text, exitCode, stderr };
+  return { text, exitCode, stderr: finalStderr };
 }

@@ -4,12 +4,16 @@
  * Clones a git repository to a local temp directory, optionally summarizes via pi subagent.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { Text } from "@earendil-works/pi-tui";
-import { runSubagent } from "./subagent.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
+import { parseRepoUrl } from "./parse-repo-url.js";
+import { summarizeWithSubagent } from "./summarize.js";
+import { renderToolCall, renderToolResult } from "./tool-renderers.js";
+
+const GIT_CLONE_TIMEOUT_MS = 120_000; // 2 minutes for large repos
 
 export function createFetchRepoTool(pi: ExtensionAPI) {
   return {
@@ -40,21 +44,23 @@ export function createFetchRepoTool(pi: ExtensionAPI) {
     }),
 
     async execute(
-      _toolCallId: string,
+      _toolCallId: string, // Required by tool interface; not used internally
       params: { url: string; summarize?: string },
       signal: AbortSignal | undefined,
-      onUpdate: any,
-      ctx: any,
+      onUpdate?: (update: { content: Array<{ type: string; text: string }>; details: Record<string, unknown> }) => void,
+      _ctx?: { cwd: string } & Record<string, unknown>, // Not used internally; cwd is derived from targetPath
     ) {
       const { url, summarize } = params;
 
       // Validate URL scheme for git clone
-      if (!/^https?:\/\//i.test(url) && !/^git@/i.test(url)) {
-        throw new Error(
-          "Invalid repository URL: must use HTTPS or SSH (git@) scheme.",
-        );
+      if (!(/^https?:\/\//i.test(url) || /^git@/i.test(url))) {
+        throw new Error("Invalid repository URL: must use HTTPS or SSH (git@) scheme.");
       }
-      const repoInfo = parseRepoUrl(url);
+
+      // Sanitize URL against command injection
+      const sanitizedUrl = sanitizeGitUrl(url);
+
+      const repoInfo = parseRepoUrl(sanitizedUrl);
       if (!repoInfo) {
         throw new Error(`Could not parse repository URL: ${url}`);
       }
@@ -66,25 +72,31 @@ export function createFetchRepoTool(pi: ExtensionAPI) {
         throw new Error("Invalid repository owner or name in URL.");
       }
 
-      const targetPath = path.join(
-        "/tmp",
-        `repository-${owner}`,
-        repo,
-      );
+      const targetPath = path.join("/tmp", `repository-${owner}`, repo);
+      // NOTE: Cloned repos persist at /tmp/repository-{owner}/{repo} and are never
+      // automatically cleaned up. This is intentional — it allows the user or agent
+      // to access the cloned repository after the tool call returns (e.g., via
+      // subsequent read/grep/ls operations on the local path).
 
       // Streaming: cloning
       onUpdate?.({
-        content: [
-          { type: "text", text: `Cloning ${owner}/${repo}...` },
-        ],
+        content: [{ type: "text", text: `Cloning ${owner}/${repo}...` }],
         details: { status: "cloning", url, targetPath },
       });
 
       // Remove existing directory if present
+      // TOCTOU mitigation: validate target path is not a symlink before proceeding.
+      // Between fs.rm() and git clone, a symlink race could redirect the clone to
+      // an arbitrary filesystem location. Reject symlinks outright.
+      const lstat = await fs.lstat(targetPath).catch(() => null);
+      if (lstat?.isSymbolicLink()) {
+        throw new Error(`Refusing to clone: ${targetPath} is a symbolic link.`);
+      }
+
       try {
         await fs.rm(targetPath, { recursive: true, force: true });
       } catch {
-        // Ignore errors — directory may not exist
+        // Directory may not exist or may be partially created; safe to ignore
       }
 
       // Ensure parent directory exists
@@ -94,17 +106,10 @@ export function createFetchRepoTool(pi: ExtensionAPI) {
       // Clone
       const result = await pi.exec(
         "git",
-        [
-          "clone",
-          "--depth",
-          "1",
-          "--single-branch",
-          url,
-          targetPath,
-        ],
+        ["clone", "--depth", "1", "--single-branch", "--", sanitizedUrl, targetPath],
         {
           signal,
-          timeout: 120_000, // 2 minutes for large repos
+          timeout: GIT_CLONE_TIMEOUT_MS,
         },
       );
 
@@ -113,61 +118,38 @@ export function createFetchRepoTool(pi: ExtensionAPI) {
         try {
           await fs.rm(targetPath, { recursive: true, force: true });
         } catch {
-          /* ignore */
+          // Partial clone may be left in an inconsistent state; safe to ignore cleanup errors
         }
-        throw new Error(
-          `git clone failed: ${result.stderr.trim() || "unknown error"}`,
-        );
+        throw new Error(`git clone failed: ${result.stderr.trim() || "unknown error"}`);
       }
 
       // Summarization
       if (summarize) {
-        onUpdate?.({
+        const subResult = await summarizeWithSubagent({
           content: [
-            { type: "text", text: "Analyzing repository..." },
-          ],
-          details: { status: "summarizing", targetPath },
+            `Repository: ${owner}/${repo}`,
+            `URL: ${url}`,
+            `Local path: ${targetPath}`,
+            "",
+            `Explore the repository at ${targetPath} using your tools (read, find, grep, ls, bash).`,
+          ].join("\n"),
+          summarize,
+          roleContext: "You are analyzing a cloned git repository.",
+          url,
+          cwd: targetPath,
+          signal,
+          onUpdate,
         });
 
-        const taskPrompt = [
-          "You are analyzing a cloned git repository.",
-          `Repository: ${owner}/${repo}`,
-          `URL: ${url}`,
-          `Local path: ${targetPath}`,
-          "",
-          `Explore the repository at ${targetPath} using your tools (read, find, grep, ls, bash).`,
-          "",
-          `User's instruction: ${summarize}`,
-          "",
-          "Provide a focused response based on the user's instruction above.",
-        ].join("\n");
-
-        const subResult = await runSubagent(
-          taskPrompt,
-          targetPath,
-          signal,
-        );
-
-        if (subResult.error) {
-          throw new Error(
-            `Repository summarization failed: ${subResult.error}`,
-          );
-        }
-
         return {
-          content: [
-            {
-              type: "text",
-              text: subResult.text || "(no summary produced)",
-            },
-          ],
+          content: subResult.content,
           details: {
             url,
             owner,
             repo,
             targetPath,
-            summarized: true,
-            summarizePrompt: summarize,
+            summarized: subResult.summarized,
+            summarizePrompt: subResult.summarizePrompt,
           },
         };
       }
@@ -190,80 +172,79 @@ export function createFetchRepoTool(pi: ExtensionAPI) {
       };
     },
 
-    renderCall(args: any, theme: any) {
-      const url: string = args.url || "...";
-      const shortUrl =
-        url.length > 60 ? `${url.slice(0, 57)}...` : url;
-      let text = theme.fg("toolTitle", theme.bold("fetch-repo "));
-      text += theme.fg("accent", shortUrl);
-      if (args.summarize) {
-        const preview =
-          args.summarize.length > 40
-            ? `${args.summarize.slice(0, 37)}...`
-            : args.summarize;
-        text += theme.fg("dim", ` — ${preview}`);
-      }
-      return new Text(text, 0, 0);
+    renderCall(args: { url?: string; summarize?: string }, theme: Theme) {
+      return new Text(renderToolCall("fetch-repo", { url: args.url, summarize: args.summarize }, theme), 0, 0);
     },
 
-    renderResult(result: any, { isPartial }: any, theme: any) {
-      if (isPartial) {
-        return new Text(theme.fg("warning", "Processing..."), 0, 0);
-      }
-      const details = result.details as any;
-      const icon = result.isError
-        ? theme.fg("error", "✗")
-        : theme.fg("success", "✓");
-      let text = icon;
-
-      if (details?.owner && details?.repo) {
-        text +=
-          " " +
-          theme.fg("accent", `${details.owner}/${details.repo}`);
-      }
-      if (details?.summarized) {
-        text += " " + theme.fg("muted", "(summarized)");
-      }
-      if (details?.targetPath) {
-        text +=
-          " " + theme.fg("dim", `→ ${details.targetPath}`);
-      }
-      return new Text(text, 0, 0);
+    renderResult(
+      result: { content: Array<{ type: string; text?: string }>; details?: Record<string, unknown>; isError?: boolean },
+      { isPartial }: { isPartial?: boolean },
+      theme: Theme,
+    ) {
+      const details = result.details;
+      return new Text(
+        renderToolResult(result, details ?? {}, { isPartial }, theme, {
+          showOwnerRepo:
+            details?.owner && details?.repo
+              ? { owner: details.owner as string, repo: details.repo as string }
+              : undefined,
+          showSummarized: details?.summarized as boolean | undefined,
+          showTargetPath: details?.targetPath as string | undefined,
+        }),
+        0,
+        0,
+      );
     },
   };
 }
 
-// --- Helper: Parse repository URL ---
+// --- Helper: Sanitize and validate git URL against command injection ---
 
-interface RepoInfo {
-  owner: string;
-  repo: string;
-}
-
-function parseRepoUrl(url: string): RepoInfo | null {
-  // SSH: git@github.com:owner/repo.git
-  const sshMatch = url.match(
-    /git@[^:]+:([^/]+)\/([^/]+?)(?:\.git)?$/,
-  );
-  if (sshMatch) {
-    return { owner: sshMatch[1], repo: sshMatch[2] };
+function sanitizeGitUrl(url: string): string {
+  // 1. Reject empty or excessively long URLs
+  if (!url || url.length > 2048) {
+    throw new Error("Invalid repository URL: empty or exceeds maximum length.");
   }
 
-  // HTTPS: https://github.com/owner/repo(.git)?(/tree/...)?
-  const httpsMatch = url.match(
-    /https?:\/\/[^/]+\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/.*)?$/,
-  );
-  if (httpsMatch) {
-    return { owner: httpsMatch[1], repo: httpsMatch[2] };
+  // 2. Reject whitespace (spaces, tabs, newlines, etc.)
+  if (/\s/.test(url)) {
+    throw new Error("Invalid repository URL: must not contain whitespace.");
   }
 
-  // Generic: owner/repo at the end of any URL
-  const genericMatch = url.match(
-    /\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/,
-  );
-  if (genericMatch) {
-    return { owner: genericMatch[1], repo: genericMatch[2] };
+  // 3. Reject git argument injection patterns
+  //    ext:: is a git remote helper protocol specifier
+  if (/ext::/i.test(url)) {
+    throw new Error("Invalid repository URL: ext:: protocol is not allowed.");
   }
 
-  return null;
+  // 4. Reject shell metacharacters that could be dangerous
+  //    even in non-shell exec contexts (defense in depth)
+  const shellMetaChars = /[;|`$(){}!\\'"]/.test(url);
+  if (shellMetaChars) {
+    throw new Error("Invalid repository URL: contains shell metacharacters.");
+  }
+
+  // 4b. Reject control characters (0x00-0x1f) beyond what \s catches
+  for (let i = 0; i < url.length; i++) {
+    const code = url.charCodeAt(i);
+    if (code >= 0x00 && code <= 0x1f) {
+      throw new Error("Invalid repository URL: contains control characters.");
+    }
+  }
+
+  // 5. Strict character allowlist:
+  //    alphanumeric, -, _, ., /, :, @, #, ?, =, &
+  const allowedChars = /^[a-zA-Z0-9\-_./:@#?=&]+$/;
+  if (!allowedChars.test(url)) {
+    throw new Error("Invalid repository URL: contains disallowed characters.");
+  }
+
+  // 6. Strip embedded credentials from HTTPS URLs
+  //    https://user:pass@github.com/org/repo → https://github.com/org/repo
+  const httpsWithCreds = url.match(/^(https?:\/\/)([^/@]+@)(.+)$/);
+  if (httpsWithCreds) {
+    return httpsWithCreds[1] + httpsWithCreds[3];
+  }
+
+  return url;
 }

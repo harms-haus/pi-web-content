@@ -1,0 +1,244 @@
+/**
+ * SSRF protection module
+ *
+ * Provides URL validation against Server-Side Request Forgery attacks,
+ * including DNS rebinding, non-decimal IP representations, and redirect-based SSRF.
+ */
+
+import { resolve4, resolve6 } from "node:dns/promises";
+
+/** Blocklist of exact hostnames that are always internal */
+export const BLOCKED_HOSTNAMES: readonly string[] = ["localhost", "127.0.0.1", "0.0.0.0", "[::1]"];
+
+/** Blocklist of hostname prefixes for private IP ranges */
+export const BLOCKED_HOSTNAME_PREFIXES: readonly string[] = [
+  "10.",
+  "172.16.",
+  "172.17.",
+  "172.18.",
+  "172.19.",
+  "172.20.",
+  "172.21.",
+  "172.22.",
+  "172.23.",
+  "172.24.",
+  "172.25.",
+  "172.26.",
+  "172.27.",
+  "172.28.",
+  "172.29.",
+  "172.30.",
+  "172.31.",
+  "192.168.",
+  "169.254.",
+];
+
+/** Check if a hostname string matches the static blocklist (no DNS resolution) */
+export function isBlockedHostname(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  if (BLOCKED_HOSTNAMES.includes(lower)) return true;
+  if (BLOCKED_HOSTNAME_PREFIXES.some((p) => lower.startsWith(p))) return true;
+  return false;
+}
+
+/**
+ * Check if an IPv4 address is private/internal.
+ * Handles decimal, hex (0x...), and octal (0...) representations.
+ */
+function isPrivateIPv4(ip: string): boolean {
+  // Normalize: strip leading zeros and handle octal/hex
+  const parts = ip.split(".");
+  if (parts.length !== 4) return false;
+
+  const numericParts: number[] = [];
+  for (const part of parts) {
+    const parsed = parseIPSegment(part);
+    if (parsed === null || parsed < 0 || parsed > 255) return false;
+    numericParts.push(parsed);
+  }
+
+  const [a, b] = numericParts;
+
+  // 10.x.x.x
+  if (a === 10) return true;
+
+  // 127.x.x.x (loopback)
+  if (a === 127) return true;
+
+  // 172.16.x.x - 172.31.x.x
+  if (a === 172 && b >= 16 && b <= 31) return true;
+
+  // 192.168.x.x
+  if (a === 192 && b === 168) return true;
+
+  // 169.254.x.x (link-local)
+  if (a === 169 && b === 254) return true;
+
+  // 0.x.x.x
+  if (a === 0) return true;
+
+  return false;
+}
+
+/**
+ * Parse an IP segment that may be decimal, hex (0x...), or octal (0...).
+ */
+function parseIPSegment(segment: string): number | null {
+  if (!segment) return null;
+
+  // Hex: 0x prefix
+  if (segment.startsWith("0x") || segment.startsWith("0X")) {
+    const val = parseInt(segment, 16);
+    return Number.isNaN(val) ? null : val;
+  }
+
+  // Octal: starts with 0 and has more digits (but not just "0")
+  if (segment.startsWith("0") && segment.length > 1) {
+    const val = parseInt(segment, 8);
+    return Number.isNaN(val) ? null : val;
+  }
+
+  // Decimal
+  const val = parseInt(segment, 10);
+  return Number.isNaN(val) ? null : val;
+}
+
+/**
+ * Check if an IPv6 address is private/internal.
+ * Also handles IPv4-mapped addresses (::ffff:x.x.x.x and ::ffff:XXXX:XXXX).
+ */
+function isPrivateIPv6(ip: string): boolean {
+  const lower = ip.toLowerCase();
+
+  // IPv4-mapped IPv6 in dotted-decimal: ::ffff:x.x.x.x
+  const mappedMatch = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mappedMatch) {
+    return isPrivateIPv4(mappedMatch[1]);
+  }
+
+  // IPv4-mapped IPv6 in hex format: ::ffff:XXXX:XXXX
+  const mappedHex = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mappedHex) {
+    const hi = parseInt(mappedHex[1], 16);
+    const lo = parseInt(mappedHex[2], 16);
+    const a = (hi >> 8) & 0xff;
+    const b = hi & 0xff;
+    const c = (lo >> 8) & 0xff;
+    const d = lo & 0xff;
+    return isPrivateIPv4(`${a}.${b}.${c}.${d}`);
+  }
+
+  // ::1 (loopback)
+  if (lower === "::1" || lower === "0:0:0:0:0:0:0:1") return true;
+
+  // fe80::/10 (link-local)
+  if (lower.startsWith("fe80:") || lower.startsWith("fe90:") || lower.startsWith("fea0:") || lower.startsWith("feb0:")) return true;
+
+  // fc00::/7 (unique local: fc00::/8 and fd00::/8)
+  if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
+
+  return false;
+}
+
+/**
+ * Resolve a hostname via DNS and check if any resolved IP is private/internal.
+ * Uses dns.promises.resolve4() and resolve6().
+ * For IPv6, also check IPv4-mapped addresses (::ffff:x.x.x.x).
+ * Returns true if ANY resolved IP is internal.
+ */
+export async function isBlockedByDns(hostname: string): Promise<boolean> {
+  // Check IPv4 addresses
+  try {
+    const ipv4Addresses = await resolve4(hostname);
+    for (const ip of ipv4Addresses) {
+      if (isPrivateIPv4(ip)) return true;
+    }
+  } catch {
+    // DNS resolution failed — not a sign of safety, but we continue to IPv6
+  }
+
+  // Check IPv6 addresses
+  try {
+    const ipv6Addresses = await resolve6(hostname);
+    for (const ip of ipv6Addresses) {
+      if (isPrivateIPv6(ip)) return true;
+    }
+  } catch {
+    // DNS resolution failed — continue
+  }
+
+  return false;
+}
+
+/** Full SSRF validation of a URL. Steps:
+ *  1. Parse URL (throw descriptive Error if invalid)
+ *  2. Check scheme is http or https
+ *  3. Check hostname against static blocklist (isBlockedHostname)
+ *  4. Resolve hostname via DNS, check resolved IPs (isBlockedByDns)
+ *  5. Return the parsed URL object
+ *  Throws Error with descriptive message if blocked. */
+export async function validateUrlForSsrf(url: string): Promise<URL> {
+  let parsed: URL;
+
+  // Step 1: Parse URL
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid URL: ${url}`);
+  }
+
+  // Step 2: Check scheme
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Invalid URL: scheme must be http or https. Got: ${parsed.protocol}`);
+  }
+
+  // Step 2.5: Check IPv6 address literals for private/internal addresses
+  if (parsed.hostname.startsWith("[") && parsed.hostname.endsWith("]")) {
+    const ipv6 = parsed.hostname.slice(1, -1);
+    if (isPrivateIPv6(ipv6)) {
+      throw new Error(`Blocked: IPv6 address ${parsed.hostname} is internal/private.`);
+    }
+  }
+
+  // Step 3: Check hostname against static blocklist
+  if (isBlockedHostname(parsed.hostname)) {
+    throw new Error(`Blocked: cannot fetch internal/private addresses (${parsed.hostname}).`);
+  }
+
+  // Step 4: Resolve hostname via DNS, check resolved IPs
+  const blocked = await isBlockedByDns(parsed.hostname);
+  if (blocked) {
+    throw new Error(`Blocked: resolved IP for ${parsed.hostname} is internal/private.`);
+  }
+
+  // Step 5: Return the parsed URL
+  return parsed;
+}
+
+/** Validate a redirect target URL for SSRF. Same checks as validateUrlForSsrf.
+ *  Takes the from URL for logging purposes. */
+export async function validateRedirectForSsrf(from: URL, to: URL): Promise<void> {
+  // Check scheme
+  if (to.protocol !== "http:" && to.protocol !== "https:") {
+    throw new Error(`Blocked: redirect to ${to.href} uses unsupported scheme ${to.protocol} (from ${from.href}).`);
+  }
+
+  // Check IPv6 address literals for private/internal addresses
+  if (to.hostname.startsWith("[") && to.hostname.endsWith("]")) {
+    const ipv6 = to.hostname.slice(1, -1);
+    if (isPrivateIPv6(ipv6)) {
+      throw new Error(`Blocked: IPv6 address ${to.hostname} is internal/private (from ${from.href}).`);
+    }
+  }
+
+  // Check hostname against static blocklist
+  if (isBlockedHostname(to.hostname)) {
+    throw new Error(`Blocked: redirect to internal/private address (${to.hostname}) from ${from.href}.`);
+  }
+
+  // Resolve hostname via DNS, check resolved IPs
+  const blocked = await isBlockedByDns(to.hostname);
+  if (blocked) {
+    throw new Error(`Blocked: redirect resolved IP for ${to.hostname} is internal/private (from ${from.href}).`);
+  }
+}
