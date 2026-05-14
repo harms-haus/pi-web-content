@@ -62,7 +62,7 @@ pi -e git:github.com/harms-haus/pi-web-content
 
 This extension includes:
 - **SSRF protection**: Blocks requests to internal/private IP addresses (localhost, 10.x, 192.168.x, 169.254.x, etc.)
-- **Content-Length guard**: Rejects responses larger than 10 MB
+- **Streaming size guard**: Rejects responses larger than 10 MB (enforced via streaming byte counting)
 - **Path traversal protection**: Validates repository owner/names from URLs
 - **Injection-resistant delimiters**: Uses unique tokens for content boundaries in subagent prompts
 - **URL scheme validation**: Only HTTPS and SSH URLs for git clone; only HTTP(S) for web fetch
@@ -87,6 +87,37 @@ Dependencies:
 - [@mozilla/readability](https://github.com/mozilla/readability) — Article content extraction (same engine as Firefox Reader View)
 - [jsdom](https://github.com/jsdom/jsdom) — DOM implementation for Node.js
 
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/architecture.md) | Module structure, data flows, dependency graph |
+| [Security](docs/security.md) | SSRF protection layers, input sanitization, threat model |
+| [Development](docs/development.md) | Build/test/lint workflows, test patterns, adding features |
+| [Configuration](docs/configuration.md) | Configurable constants, truncation behavior, storage paths |
+| [Troubleshooting](docs/troubleshooting.md) | Common errors and solutions |
+| [Contributing](CONTRIBUTING.md) | How to contribute, code requirements, PR process |
+| [Changelog](CHANGELOG.md) | Version history |
+
+## Troubleshooting
+
+Common issues and their solutions are documented in [docs/troubleshooting.md](docs/troubleshooting.md), including:
+- SSRF blocks and private IP resolution
+- Binary content rejection
+- Git clone failures
+- Content size limits and timeouts
+- Summarization errors
+
+## Configuration
+
+Key runtime constants and their defaults are documented in [docs/configuration.md](docs/configuration.md):
+- Fetch timeout: 30 seconds
+- Git clone timeout: 2 minutes
+- Maximum response size: 10 MB
+- Maximum redirects: 10
+- Binary content types that are rejected
+- Supported git hosting platforms (10 hostnames across 8 platforms)
+
 ## License
 
-MIT
+[MIT](LICENSE) — see the [LICENSE](LICENSE) file.
