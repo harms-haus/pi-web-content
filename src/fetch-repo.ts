@@ -27,7 +27,7 @@ export function createFetchRepoTool(pi: ExtensionAPI) {
     ].join(" "),
     promptSnippet: "Clone and explore git repositories",
     promptGuidelines: [
-      "Use fetch-repo when you need to browse or analyze a git repository.",
+      "Use fetch_repo when you need to browse or analyze a git repository.",
       "The repo is cloned to /tmp/repository-{owner}/{repo-name}.",
       "Use the summarize parameter to get a high-level overview without consuming context.",
     ],

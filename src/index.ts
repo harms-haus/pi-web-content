@@ -1,7 +1,7 @@
 /**
  * pi-web-content extension
  *
- * Provides fetch-content and fetch-repo tools for pi.
+ * Provides fetch_content and fetch_repo tools for pi.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

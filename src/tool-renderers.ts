@@ -79,7 +79,7 @@ export function renderToolResult(
     text += ` ${theme.fg("accent", `${owner}/${repo}`)}`;
   }
 
-  // Title from details (used by fetch-content)
+  // Title from details (used by fetch_content)
   if (details?.title) {
     text += ` ${theme.fg("dim", `— ${details.title}`)}`;
   }

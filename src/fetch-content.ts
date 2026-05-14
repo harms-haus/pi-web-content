@@ -85,7 +85,7 @@ async function readResponseWithSizeLimit(response: Response, maxBytes: number): 
   return new TextDecoder().decode(combined);
 }
 
-/** Structured details returned by fetch-content tool */
+/** Structured details returned by fetch_content tool */
 interface FetchContentDetails {
   url?: string;
   title?: string;
@@ -109,7 +109,7 @@ export function createFetchContentTool(_pi: ExtensionAPI) {
     ].join(" "),
     promptSnippet: "Fetch and read web content as markdown",
     promptGuidelines: [
-      "Use fetch-content when you need to read a web page, documentation, or online article.",
+      "Use fetch_content when you need to read a web page, documentation, or online article.",
       "Use the summarize parameter to reduce context usage for long pages.",
     ],
     parameters: Type.Object({
