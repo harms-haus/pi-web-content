@@ -4,7 +4,7 @@ A [pi](https://pi.dev) extension that adds tools for fetching web content and cl
 
 ## Tools
 
-### `fetch-content`
+### `fetch_content`
 
 Fetch a URL and convert its HTML content to clean markdown. Uses Mozilla Readability to strip navigation, ads, and sidebars, then Turndown to convert to GitHub Flavored Markdown.
 
@@ -20,7 +20,7 @@ When `summarize` is provided, a pi subagent processes the full content with your
 - "Read this article: https://example.com/blog/post" → full markdown
 - "Summarize the key points from https://example.com/docs/api" → summarized
 
-### `fetch-repo`
+### `fetch_repo`
 
 Clone a git repository to `/tmp/repository-{owner}/{repo-name}` for exploration. Performs a shallow clone (`--depth 1`) for speed.
 
@@ -63,7 +63,7 @@ pi -e git:github.com/harms-haus/pi-web-content
 ## Requirements
 
 - [pi](https://pi.dev) coding agent
-- [git](https://git-scm.com) (for `fetch-repo`)
+- [git](https://git-scm.com) (for `fetch_repo`)
 - Node.js 20+
 
 ## Security

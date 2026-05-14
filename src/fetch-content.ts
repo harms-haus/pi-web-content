@@ -1,5 +1,5 @@
 /**
- * fetch-content tool
+ * fetch_content tool
  *
  * Fetches a URL, converts HTML to markdown, optionally summarizes via pi subagent.
  */
@@ -99,7 +99,7 @@ interface FetchContentDetails {
 
 export function createFetchContentTool(_pi: ExtensionAPI) {
   return {
-    name: "fetch-content",
+    name: "fetch_content",
     label: "Fetch Content",
     description: [
       "Fetch a URL and convert its content to markdown.",
@@ -302,7 +302,7 @@ export function createFetchContentTool(_pi: ExtensionAPI) {
     },
 
     renderCall(args: { url?: string; summarize?: string }, theme: Theme) {
-      const text = renderToolCall("fetch-content", { url: args.url, summarize: args.summarize }, theme);
+      const text = renderToolCall("fetch_content", { url: args.url, summarize: args.summarize }, theme);
       return new Text(text, 0, 0);
     },
 

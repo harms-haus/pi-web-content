@@ -1,5 +1,5 @@
 /**
- * fetch-repo tool
+ * fetch_repo tool
  *
  * Clones a git repository to a local temp directory, optionally summarizes via pi subagent.
  */
@@ -17,7 +17,7 @@ const GIT_CLONE_TIMEOUT_MS = 120_000; // 2 minutes for large repos
 
 export function createFetchRepoTool(pi: ExtensionAPI) {
   return {
-    name: "fetch-repo",
+    name: "fetch_repo",
     label: "Fetch Repo",
     description: [
       "Clone a git repository to a local temp directory for exploration.",
@@ -173,7 +173,7 @@ export function createFetchRepoTool(pi: ExtensionAPI) {
     },
 
     renderCall(args: { url?: string; summarize?: string }, theme: Theme) {
-      return new Text(renderToolCall("fetch-repo", { url: args.url, summarize: args.summarize }, theme), 0, 0);
+      return new Text(renderToolCall("fetch_repo", { url: args.url, summarize: args.summarize }, theme), 0, 0);
     },
 
     renderResult(
