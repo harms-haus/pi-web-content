@@ -12,7 +12,7 @@ vi.mock("../summarize.js", () => ({
 }));
 
 vi.mock("../tool-renderers.js", () => ({
-  renderToolCall: vi.fn().mockReturnValue("fetch-repo https://github.com/owner/repo"),
+  renderToolCall: vi.fn().mockReturnValue("fetch_repo https://github.com/owner/repo"),
   renderToolResult: vi.fn().mockReturnValue("✓ owner/repo"),
 }));
 
@@ -26,7 +26,7 @@ vi.mock("node:fs/promises", () => ({
 import { createFetchRepoTool } from "../fetch-repo.js";
 import * as fs from "node:fs/promises";
 
-describe("fetch-repo tool", () => {
+describe("fetch_repo tool", () => {
   const mockExec = vi.fn();
   const mockPi = {
     exec: mockExec,

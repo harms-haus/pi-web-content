@@ -31,7 +31,7 @@ vi.mock("../summarize.js", () => ({
 }));
 
 vi.mock("../tool-renderers.js", () => ({
-  renderToolCall: vi.fn().mockReturnValue("fetch-content https://example.com"),
+  renderToolCall: vi.fn().mockReturnValue("fetch_content https://example.com"),
   renderToolResult: vi.fn().mockReturnValue("✓ https://example.com"),
 }));
 
@@ -44,7 +44,7 @@ vi.mock("node:fs/promises", () => ({
 import { createFetchContentTool } from "../fetch-content.js";
 import * as ssrf from "../ssrf.js";
 
-describe("fetch-content tool", () => {
+describe("fetch_content tool", () => {
   const mockPi = {} as ExtensionAPI;
   const mockTheme = {
     fg: vi.fn().mockImplementation((_, text: string) => text),

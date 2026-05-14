@@ -38,21 +38,21 @@ describe("renderToolCall", () => {
   const theme = createMockTheme();
 
   it("renders tool name and URL", () => {
-    const result = renderToolCall("fetch-content", { url: "https://example.com" }, theme);
-    expect(result).toContain("fetch-content");
+    const result = renderToolCall("fetch_content", { url: "https://example.com" }, theme);
+    expect(result).toContain("fetch_content");
     expect(result).toContain("https://example.com");
   });
 
   it("truncates long URLs at 60 chars", () => {
     const longUrl = `https://example.com/${"a".repeat(100)}`;
-    const result = renderToolCall("fetch-content", { url: longUrl }, theme);
+    const result = renderToolCall("fetch_content", { url: longUrl }, theme);
     // The URL portion should be truncated to 60 chars
-    expect(result.length).toBeLessThan(`[bold:fetch-content ][accent:${longUrl}]`.length);
+    expect(result.length).toBeLessThan(`[bold:fetch_content ][accent:${longUrl}]`.length);
   });
 
   it("shows summarize preview when present", () => {
     const result = renderToolCall(
-      "fetch-content",
+      "fetch_content",
       { url: "https://example.com", summarize: "extract key points" },
       theme,
     );
@@ -61,9 +61,9 @@ describe("renderToolCall", () => {
 
   it("truncates long summarize at 40 chars", () => {
     const longSummarize = "a".repeat(100);
-    const result = renderToolCall("fetch-content", { url: "https://example.com", summarize: longSummarize }, theme);
+    const result = renderToolCall("fetch_content", { url: "https://example.com", summarize: longSummarize }, theme);
     expect(result.length).toBeLessThan(
-      `[bold:fetch-content ][accent:https://example.com][dim: — ${longSummarize}]`.length,
+      `[bold:fetch_content ][accent:https://example.com][dim: — ${longSummarize}]`.length,
     );
   });
 });
