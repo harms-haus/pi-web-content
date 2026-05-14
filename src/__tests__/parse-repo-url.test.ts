@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parseRepoUrl } from "../parse-repo-url.js";
 
 describe("parseRepoUrl", () => {
@@ -149,7 +149,7 @@ describe("parseRepoUrl", () => {
       "https://github.com/owner/repo|cmd",
       "https://github.com/owner/repo&cmd",
       "https://github.com/owner/repo<cmd>",
-      "https://github.com/owner/repo\"cmd\"",
+      'https://github.com/owner/repo"cmd"',
       "https://github.com/owner/repo'cmd'",
       "https://github.com/owner/repo;cmd.git",
       "git@github.com:owner/repo;cmd.git",
@@ -206,6 +206,59 @@ describe("parseRepoUrl", () => {
 
     it("rejects colons in names", () => {
       expect(parseRepoUrl("https://github.com/owner:name/repo")).toBeNull();
+    });
+  });
+
+  describe("SourceHut URLs", () => {
+    it("parses SourceHut SSH URL with .git suffix", () => {
+      expect(parseRepoUrl("git@git.sr.ht:~user/repo.git")).toEqual({
+        owner: "~user",
+        repo: "repo",
+      });
+    });
+
+    it("parses SourceHut SSH URL without .git suffix", () => {
+      expect(parseRepoUrl("git@git.sr.ht:~user/repo")).toEqual({
+        owner: "~user",
+        repo: "repo",
+      });
+    });
+
+    it("parses SourceHut HTTPS URL", () => {
+      expect(parseRepoUrl("https://git.sr.ht/~user/repo")).toEqual({
+        owner: "~user",
+        repo: "repo",
+      });
+    });
+
+    it("parses SourceHut HTTPS URL with subpath (refs)", () => {
+      expect(parseRepoUrl("https://git.sr.ht/~user/repo/refs")).toEqual({
+        owner: "~user",
+        repo: "repo",
+      });
+    });
+
+    it("rejects tilde in the middle of owner name", () => {
+      expect(parseRepoUrl("https://git.sr.ht/~us~er/repo")).toBeNull();
+    });
+
+    it("rejects tilde in repo name", () => {
+      expect(parseRepoUrl("https://git.sr.ht/~user/re~po")).toBeNull();
+    });
+
+    it("parses SourceHut HTTPS URL with .git suffix", () => {
+      expect(parseRepoUrl("https://git.sr.ht/~user/repo.git")).toEqual({
+        owner: "~user",
+        repo: "repo",
+      });
+    });
+
+    it("rejects double tilde in owner name", () => {
+      expect(parseRepoUrl("https://git.sr.ht/~~user/repo")).toBeNull();
+    });
+
+    it("rejects tilde-only owner name", () => {
+      expect(parseRepoUrl("https://git.sr.ht/~/repo")).toBeNull();
     });
   });
 

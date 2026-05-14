@@ -1,5 +1,5 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // --- Mocks ---
 
@@ -35,17 +35,35 @@ vi.mock("../tool-renderers.js", () => ({
   renderToolResult: vi.fn().mockReturnValue("✓ https://example.com"),
 }));
 
+vi.mock("../detect-repo-url.js", () => ({
+  isRepoUrl: vi.fn().mockReturnValue({ isRepo: false, scheme: "https" }),
+}));
+
+vi.mock("../parse-repo-url.js", () => ({
+  parseRepoUrl: vi.fn().mockReturnValue({ owner: "owner", repo: "repo" }),
+}));
+
 vi.mock("node:fs/promises", () => ({
   mkdtemp: vi.fn().mockResolvedValue("/tmp/pi-fetch-abc123"),
   writeFile: vi.fn().mockResolvedValue(undefined),
+  lstat: vi.fn().mockResolvedValue(null),
+  mkdir: vi.fn().mockResolvedValue(undefined),
+  rm: vi.fn().mockResolvedValue(undefined),
 }));
 
+import * as fs from "node:fs/promises";
+import * as detectRepoUrl from "../detect-repo-url.js";
 // Import after mocks are set up
 import { createFetchContentTool } from "../fetch-content.js";
+import * as parseRepoUrl from "../parse-repo-url.js";
 import * as ssrf from "../ssrf.js";
+import * as toolRenderers from "../tool-renderers.js";
 
 describe("fetch_content tool", () => {
-  const mockPi = {} as ExtensionAPI;
+  const mockExec = vi.fn();
+  const mockPi = {
+    exec: mockExec,
+  } as unknown as ExtensionAPI;
   const mockTheme = {
     fg: vi.fn().mockImplementation((_, text: string) => text),
     bold: vi.fn().mockImplementation((text: string) => text),
@@ -57,6 +75,13 @@ describe("fetch_content tool", () => {
     vi.clearAllMocks();
     mockFetch = vi.fn();
     vi.stubGlobal("fetch", mockFetch);
+    // Default: isRepoUrl returns not-a-repo so existing web tests pass
+    vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({ isRepo: false, scheme: "https" });
+    vi.mocked(parseRepoUrl.parseRepoUrl).mockReturnValue({ owner: "owner", repo: "repo" });
+    // Default fs mocks for repo clone path
+    vi.mocked(fs.lstat).mockResolvedValue(null as never);
+    vi.mocked(fs.rm).mockResolvedValue(undefined);
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
   });
 
   function createTool() {
@@ -202,7 +227,13 @@ describe("fetch_content tool", () => {
           body: '{"key": "value"}',
         }),
       );
-      const result = await tool.execute("call-1", { url: "https://api.example.com/data" }, undefined, undefined, createContext());
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://api.example.com/data" },
+        undefined,
+        undefined,
+        createContext(),
+      );
       expect(result.content[0].text).toContain("JSON Response");
       expect(result.content[0].text).toContain('"key": "value"');
     });
@@ -215,7 +246,13 @@ describe("fetch_content tool", () => {
           body: "Hello plain text",
         }),
       );
-      const result = await tool.execute("call-1", { url: "https://example.com/readme.txt" }, undefined, undefined, createContext());
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://example.com/readme.txt" },
+        undefined,
+        undefined,
+        createContext(),
+      );
       expect(result.content[0].text).toContain("Text Response");
       expect(result.content[0].text).toContain("Hello plain text");
     });
@@ -228,7 +265,13 @@ describe("fetch_content tool", () => {
           body: "<html><body><h1>Test</h1></body></html>",
         }),
       );
-      const result = await tool.execute("call-1", { url: "https://example.com/" }, undefined, undefined, createContext());
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://example.com/" },
+        undefined,
+        undefined,
+        createContext(),
+      );
       expect(result.content[0].text).toContain("Test Page");
     });
 
@@ -279,7 +322,13 @@ describe("fetch_content tool", () => {
           body: "a,b,c\n1,2,3",
         }),
       );
-      const result = await tool.execute("call-1", { url: "https://example.com/data.csv" }, undefined, undefined, createContext());
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://example.com/data.csv" },
+        undefined,
+        undefined,
+        createContext(),
+      );
       expect(result.content[0].text).toContain("Text Response");
       expect(result.content[0].text).toContain("a,b,c");
     });
@@ -325,7 +374,13 @@ describe("fetch_content tool", () => {
         }),
       );
       // This should not throw a size error (may throw other errors due to truncation)
-      const result = await tool.execute("call-1", { url: "https://example.com/exact" }, undefined, undefined, createContext());
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://example.com/exact" },
+        undefined,
+        undefined,
+        createContext(),
+      );
       expect(result).toBeDefined();
     });
   });
@@ -387,11 +442,15 @@ describe("fetch_content tool", () => {
         url: "https://example.com/final",
       });
 
-      mockFetch
-        .mockResolvedValueOnce(redirectResponse)
-        .mockResolvedValueOnce(finalResponse);
+      mockFetch.mockResolvedValueOnce(redirectResponse).mockResolvedValueOnce(finalResponse);
 
-      const result = await tool.execute("call-1", { url: "https://example.com/redirect" }, undefined, undefined, createContext());
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://example.com/redirect" },
+        undefined,
+        undefined,
+        createContext(),
+      );
       expect(ssrf.validateRedirectForSsrf).toHaveBeenCalled();
       expect(result.content[0].text).toContain("https://example.com/final");
     });
@@ -478,7 +537,13 @@ describe("fetch_content tool", () => {
       const result = tool.renderResult(
         {
           content: [{ type: "text", text: "content" }],
-          details: { url: "https://example.com/", contentLength: 1000, truncated: false, summarized: false },
+          details: {
+            url: "https://example.com/",
+            contentLength: 1000,
+            truncated: false,
+            summarized: false,
+            type: "web",
+          },
         },
         { isPartial: false },
         mockTheme,
@@ -491,7 +556,7 @@ describe("fetch_content tool", () => {
       const result = tool.renderResult(
         {
           content: [{ type: "text", text: "content" }],
-          details: { url: "https://example.com/" },
+          details: { url: "https://example.com/", type: "web" },
         },
         { isPartial: true },
         mockTheme,
@@ -505,7 +570,7 @@ describe("fetch_content tool", () => {
         {
           content: [{ type: "text", text: "error" }],
           isError: true,
-          details: { url: "https://example.com/", status: "error" },
+          details: { url: "https://example.com/", status: "error", type: "web" },
         },
         { isPartial: false },
         mockTheme,
@@ -518,7 +583,7 @@ describe("fetch_content tool", () => {
       const result = tool.renderResult(
         {
           content: [{ type: "text", text: "content" }],
-          details: { url: "https://example.com/", truncated: true, contentLength: 50000 },
+          details: { url: "https://example.com/", truncated: true, contentLength: 50000, type: "web" },
         },
         { isPartial: false },
         mockTheme,
@@ -531,12 +596,367 @@ describe("fetch_content tool", () => {
       const result = tool.renderResult(
         {
           content: [{ type: "text", text: "summary" }],
-          details: { url: "https://example.com/", summarized: true, contentLength: 10000 },
+          details: { url: "https://example.com/", summarized: true, contentLength: 10000, type: "web" },
         },
         { isPartial: false },
         mockTheme,
       );
       expect(result).toBeDefined();
+    });
+  });
+
+  // --- Repo URL Detection Routing ---
+
+  describe("repo URL detection routing", () => {
+    it("routes web URLs through web fetch path (not clone)", async () => {
+      const tool = createTool();
+      mockFetch.mockResolvedValueOnce(createMockResponse());
+
+      await tool.execute("call-1", { url: "https://example.com" }, undefined, undefined, createContext());
+
+      expect(mockFetch).toHaveBeenCalled();
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("routes HTTPS repo URLs to clone path", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://github.com/owner/repo" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      expect(mockExec).toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result.details?.type).toBe("repo");
+    });
+
+    it("routes SSH URLs to clone path", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "ssh",
+        sanitizedUrl: "git@github.com:owner/repo.git",
+      });
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      const result = await tool.execute(
+        "call-1",
+        { url: "git@github.com:owner/repo.git" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      expect(mockExec).toHaveBeenCalled();
+      expect(result.details?.type).toBe("repo");
+    });
+  });
+
+  // --- Git Clone Success ---
+
+  describe("git clone success", () => {
+    it("returns correct path in details on successful clone", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://github.com/owner/repo" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      expect(result.details?.type).toBe("repo");
+      if (result.details?.type === "repo") {
+        expect(result.details.targetPath).toContain("repository-owner");
+        expect(result.details.targetPath).toContain("repo");
+      }
+    });
+
+    it("calls pi.exec with correct git clone arguments", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      await tool.execute("call-1", { url: "https://github.com/owner/repo" }, undefined, undefined, createContext());
+
+      expect(mockExec).toHaveBeenCalledWith(
+        "git",
+        [
+          "clone",
+          "--depth",
+          "1",
+          "--single-branch",
+          "--",
+          "https://github.com/owner/repo",
+          expect.stringContaining("repository-owner"),
+        ],
+        expect.objectContaining({ signal: undefined, timeout: 120_000 }),
+      );
+    });
+
+    it("includes type, owner, repo, and targetPath in details", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://github.com/owner/repo" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      expect(result.details?.type).toBe("repo");
+      if (result.details?.type === "repo") {
+        expect(result.details.owner).toBe("owner");
+        expect(result.details.repo).toBe("repo");
+        expect(result.details.targetPath).toBeDefined();
+      }
+    });
+  });
+
+  // --- Git Clone with Branch ---
+
+  describe("git clone with branch", () => {
+    it("includes --branch flag in git clone args", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      await tool.execute(
+        "call-1",
+        { url: "https://github.com/owner/repo", branch: "develop" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      expect(mockExec).toHaveBeenCalledWith(
+        "git",
+        [
+          "clone",
+          "--depth",
+          "1",
+          "--single-branch",
+          "--branch",
+          "develop",
+          "--",
+          "https://github.com/owner/repo",
+          expect.stringContaining("repository-owner"),
+        ],
+        expect.objectContaining({ signal: undefined, timeout: 120_000 }),
+      );
+    });
+
+    it("includes branch field in details", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://github.com/owner/repo", branch: "develop" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      expect(result.details?.type).toBe("repo");
+      if (result.details?.type === "repo") {
+        expect(result.details.branch).toBe("develop");
+      }
+    });
+  });
+
+  // --- Git Clone Failure ---
+
+  describe("git clone failure", () => {
+    it("throws descriptive error on clone failure", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      mockExec.mockResolvedValueOnce({ code: 128, stdout: "", stderr: "fatal: repository not found" });
+
+      await expect(
+        tool.execute("call-1", { url: "https://github.com/owner/repo" }, undefined, undefined, createContext()),
+      ).rejects.toThrow(/git clone failed/);
+    });
+
+    it("cleans up partial clone on failure", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      mockExec.mockResolvedValueOnce({ code: 128, stdout: "", stderr: "fatal: repository not found" });
+
+      await expect(
+        tool.execute("call-1", { url: "https://github.com/owner/repo" }, undefined, undefined, createContext()),
+      ).rejects.toThrow(/git clone failed/);
+
+      expect(fs.rm).toHaveBeenCalled();
+    });
+  });
+
+  // --- Git Clone Summarization ---
+
+  describe("git clone summarization", () => {
+    it("calls summarizeWithSubagent when summarize param is provided on repo URL", async () => {
+      const { summarizeWithSubagent } = await import("../summarize.js");
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://github.com/owner/repo", summarize: "summarize this repo" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      expect(summarizeWithSubagent).toHaveBeenCalled();
+      expect(result.details?.summarized).toBe(true);
+    });
+  });
+
+  // --- Git Clone with SSH URL ---
+
+  describe("git clone with SSH URL", () => {
+    it("accepts SSH URL without SSRF validation", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "ssh",
+        sanitizedUrl: "git@github.com:owner/repo.git",
+      });
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      await tool.execute("call-1", { url: "git@github.com:owner/repo.git" }, undefined, undefined, createContext());
+
+      expect(ssrf.validateUrlForSsrf).not.toHaveBeenCalled();
+      expect(mockExec).toHaveBeenCalled();
+    });
+  });
+
+  // --- Git Clone with HTTPS URL ---
+
+  describe("git clone with HTTPS URL", () => {
+    it("validates HTTPS repo URL through SSRF validation before cloning", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      await tool.execute("call-1", { url: "https://github.com/owner/repo" }, undefined, undefined, createContext());
+
+      expect(ssrf.validateUrlForSsrf).toHaveBeenCalledWith("https://github.com/owner/repo");
+      expect(mockExec).toHaveBeenCalled();
+    });
+  });
+
+  // --- renderResult for repo results ---
+
+  describe("renderResult for repo results", () => {
+    it("shows owner/repo for repo results", () => {
+      const tool = createTool();
+      tool.renderResult(
+        {
+          content: [{ type: "text", text: "cloned" }],
+          details: {
+            type: "repo",
+            owner: "owner",
+            repo: "repo",
+            targetPath: "/tmp/repository-owner/repo",
+            summarized: false,
+          },
+        },
+        { isPartial: false },
+        mockTheme,
+      );
+
+      expect(toolRenderers.renderToolResult).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          showOwnerRepo: { owner: "owner", repo: "repo" },
+        }),
+      );
+    });
+
+    it("shows targetPath for repo results", () => {
+      const tool = createTool();
+      tool.renderResult(
+        {
+          content: [{ type: "text", text: "cloned" }],
+          details: {
+            type: "repo",
+            owner: "owner",
+            repo: "repo",
+            targetPath: "/tmp/repository-owner/repo",
+            summarized: false,
+          },
+        },
+        { isPartial: false },
+        mockTheme,
+      );
+
+      expect(toolRenderers.renderToolResult).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          showTargetPath: "/tmp/repository-owner/repo",
+        }),
+      );
     });
   });
 });

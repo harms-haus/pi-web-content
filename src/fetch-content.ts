@@ -1,17 +1,21 @@
 /**
  * fetch_content tool
  *
- * Fetches a URL, converts HTML to markdown, optionally summarizes via pi subagent.
+ * Unified content fetcher that auto-detects git repository URLs and routes
+ * to git clone logic, or falls back to web fetch with HTML-to-markdown conversion.
+ * Optionally summarizes via pi subagent.
  */
 
-import { mkdtemp, writeFile } from "node:fs/promises";
+import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as path from "node:path";
 import type { AgentToolUpdateCallback, ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { isRepoUrl, type RepoUrlResult } from "./detect-repo-url.js";
 import { BINARY_TYPES, htmlToMarkdown } from "./html-to-markdown.js";
+import { parseRepoUrl } from "./parse-repo-url.js";
 import { validateRedirectForSsrf, validateUrlForSsrf } from "./ssrf.js";
 import { summarizeWithSubagent } from "./summarize.js";
 import { renderToolCall, renderToolResult } from "./tool-renderers.js";
@@ -20,6 +24,9 @@ import { renderToolCall, renderToolResult } from "./tool-renderers.js";
 
 /** Timeout for fetch requests (30 seconds) */
 const FETCH_TIMEOUT_MS = 30_000;
+
+/** Timeout for git clone operations (2 minutes for large repos) */
+const GIT_CLONE_TIMEOUT_MS = 120_000;
 
 /** Maximum allowed response size (10 MB) */
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
@@ -85,6 +92,59 @@ async function readResponseWithSizeLimit(response: Response, maxBytes: number): 
   return new TextDecoder().decode(combined);
 }
 
+/**
+ * Sanitize and validate a git URL against command injection.
+ * Strips embedded credentials and rejects dangerous patterns.
+ */
+function sanitizeGitUrl(url: string): string {
+  // 1. Reject empty or excessively long URLs
+  if (!url || url.length > 2048) {
+    throw new Error("Invalid repository URL: empty or exceeds maximum length.");
+  }
+
+  // 2. Reject whitespace (spaces, tabs, newlines, etc.)
+  if (/\s/.test(url)) {
+    throw new Error("Invalid repository URL: must not contain whitespace.");
+  }
+
+  // 3. Reject git argument injection patterns
+  //    ext:: is a git remote helper protocol specifier
+  if (/ext::/i.test(url)) {
+    throw new Error("Invalid repository URL: ext:: protocol is not allowed.");
+  }
+
+  // 4. Reject shell metacharacters that could be dangerous
+  //    even in non-shell exec contexts (defense in depth)
+  const shellMetaChars = /[;|`$(){}!\\'"]/.test(url);
+  if (shellMetaChars) {
+    throw new Error("Invalid repository URL: contains shell metacharacters.");
+  }
+
+  // 4b. Reject control characters (0x00-0x1f) beyond what \s catches
+  for (let i = 0; i < url.length; i++) {
+    const code = url.charCodeAt(i);
+    if (code >= 0x00 && code <= 0x1f) {
+      throw new Error("Invalid repository URL: contains control characters.");
+    }
+  }
+
+  // 5. Strict character allowlist:
+  //    alphanumeric, -, _, ., /, :, @, #, ?, =, &
+  const allowedChars = /^[a-zA-Z0-9\-_./:@#?=&]+$/;
+  if (!allowedChars.test(url)) {
+    throw new Error("Invalid repository URL: contains disallowed characters.");
+  }
+
+  // 6. Strip embedded credentials from HTTPS URLs
+  //    https://user:pass@github.com/org/repo → https://github.com/org/repo
+  const httpsWithCreds = url.match(/^(https?:\/\/)([^/@]+@)(.+)$/);
+  if (httpsWithCreds) {
+    return httpsWithCreds[1] + httpsWithCreds[3];
+  }
+
+  return url;
+}
+
 /** Structured details returned by fetch_content tool */
 interface FetchContentDetails {
   url?: string;
@@ -95,22 +155,179 @@ interface FetchContentDetails {
   truncated?: boolean;
   fullOutputPath?: string;
   status?: string;
+  /** Whether this was a web fetch or git repo clone */
+  type: "web" | "repo";
+  /** Repo owner (only for type=repo) */
+  owner?: string;
+  /** Repo name (only for type=repo) */
+  repo?: string;
+  /** Local path to cloned repo (only for type=repo) */
+  targetPath?: string;
+  /** Git branch that was cloned (only for type=repo) */
+  branch?: string;
 }
 
-export function createFetchContentTool(_pi: ExtensionAPI) {
+/** Execute the git clone flow for a detected repository URL. */
+async function executeRepoFetch(
+  pi: ExtensionAPI,
+  params: { url: string; summarize?: string; branch?: string },
+  repoResult: RepoUrlResult,
+  signal: AbortSignal | undefined,
+  onUpdate: AgentToolUpdateCallback<FetchContentDetails> | undefined,
+  _ctx: ExtensionContext,
+) {
+  const { url, summarize, branch } = params;
+
+  // For SSH URLs, skip SSRF validation (can't fetch SSH URLs via HTTP)
+  // For HTTPS URLs detected as repos, still do SSRF validation
+  // "https" scheme covers both http:// and https:// URLs (detect-repo-url doesn't distinguish)
+  if (repoResult.scheme === "https" && repoResult.sanitizedUrl) {
+    await validateUrlForSsrf(repoResult.sanitizedUrl);
+  }
+
+  // Sanitize URL
+  const sanitizedUrl = sanitizeGitUrl(repoResult.sanitizedUrl || url);
+
+  // Parse owner/repo
+  const repoInfo = parseRepoUrl(sanitizedUrl);
+  if (!repoInfo) {
+    throw new Error(`Could not parse repository URL: ${url}`);
+  }
+
+  const { owner, repo } = repoInfo;
+
+  // Path traversal protection
+  if (owner === ".." || repo === ".." || owner === "." || repo === ".") {
+    throw new Error("Invalid repository owner or name in URL.");
+  }
+
+  const targetPath = path.join("/tmp", `repository-${owner}`, repo);
+  // NOTE: Cloned repos persist at /tmp/repository-{owner}/{repo} and are never
+  // automatically cleaned up. This is intentional — it allows the user or agent
+  // to access the cloned repository after the tool call returns (e.g., via
+  // subsequent read/grep/ls operations on the local path).
+
+  // Streaming: cloning
+  onUpdate?.({
+    content: [{ type: "text", text: `Cloning ${owner}/${repo}...` }],
+    details: { status: "cloning", url, targetPath, type: "repo" },
+  });
+
+  // Remove existing directory if present
+  // TOCTOU mitigation: validate target path is not a symlink before proceeding.
+  const lstat = await fs.lstat(targetPath).catch(() => null);
+  if (lstat?.isSymbolicLink()) {
+    throw new Error(`Refusing to clone: ${targetPath} is a symbolic link.`);
+  }
+
+  try {
+    await fs.rm(targetPath, { recursive: true, force: true });
+  } catch {
+    // Directory may not exist or may be partially created; safe to ignore
+  }
+
+  // Ensure parent directory exists
+  const parentDir = path.dirname(targetPath);
+  await fs.mkdir(parentDir, { recursive: true });
+
+  // Clone with optional branch
+  const cloneArgs = ["clone", "--depth", "1", "--single-branch"];
+  if (branch) {
+    cloneArgs.push("--branch", branch);
+  }
+  cloneArgs.push("--", sanitizedUrl, targetPath);
+
+  // Clone
+  const result = await pi.exec("git", cloneArgs, {
+    signal,
+    timeout: GIT_CLONE_TIMEOUT_MS,
+  });
+
+  if (result.code !== 0) {
+    // Clean up partial clone
+    try {
+      await fs.rm(targetPath, { recursive: true, force: true });
+    } catch {
+      // Partial clone may be left in an inconsistent state; safe to ignore cleanup errors
+    }
+    throw new Error(`git clone failed: ${result.stderr.trim() || "unknown error"}`);
+  }
+
+  // Summarization
+  if (summarize) {
+    const subResult = await summarizeWithSubagent({
+      content: [
+        `Repository: ${owner}/${repo}`,
+        `URL: ${url}`,
+        `Local path: ${targetPath}`,
+        "",
+        `Explore the repository at ${targetPath} using your tools (read, find, grep, ls, bash).`,
+      ].join("\n"),
+      summarize,
+      roleContext: "You are analyzing a cloned git repository.",
+      url,
+      cwd: targetPath,
+      signal,
+      onUpdate: onUpdate as
+        | ((update: { content: Array<{ type: string; text: string }>; details: { status: string } }) => void)
+        | undefined,
+    });
+
+    return {
+      content: subResult.content,
+      details: {
+        url,
+        owner,
+        repo,
+        targetPath,
+        summarized: subResult.summarized,
+        summarizePrompt: subResult.summarizePrompt,
+        type: "repo" as const,
+        branch,
+      },
+    };
+  }
+
+  // Return path
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Repository cloned to: ${targetPath}\n\nOwner: ${owner}\nRepo: ${repo}\nURL: ${url}${branch ? `\nBranch: ${branch}` : ""}`,
+      },
+    ],
+    details: {
+      url,
+      owner,
+      repo,
+      targetPath,
+      summarized: false,
+      type: "repo" as const,
+      branch,
+    },
+  };
+}
+
+export function createFetchContentTool(pi: ExtensionAPI) {
   return {
     name: "fetch_content",
     label: "Fetch Content",
     description: [
-      "Fetch a URL and convert its content to markdown.",
-      "Strips navigation, ads, and sidebars from HTML pages using Mozilla Readability.",
+      "Fetch a URL and convert its content to markdown, or auto-detect and clone a git repository.",
+      "For web URLs: strips navigation, ads, and sidebars from HTML pages using Mozilla Readability.",
+      "For git repo URLs (HTTPS or SSH): performs a shallow clone (--depth 1) to a local temp directory.",
       "Returns full markdown by default. Use 'summarize' to get a condensed version.",
-      "Supports HTML pages, JSON APIs, and plain text URLs.",
+      "Supports HTML pages, JSON APIs, plain text URLs, and git repositories.",
+      "Auto-detects whether the URL is a web page or git repo based on the host and path.",
+      "Known git hosts: GitHub, GitLab, Bitbucket, Codeberg, Gitea, Gitee, SourceHut, Azure DevOps.",
+      "Returns the local clone path by default for repos. Use 'summarize' to get an AI-generated overview.",
     ].join(" "),
-    promptSnippet: "Fetch and read web content as markdown",
+    promptSnippet: "Fetch and read web content as markdown, or clone git repositories",
     promptGuidelines: [
       "Use fetch_content when you need to read a web page, documentation, or online article.",
-      "Use the summarize parameter to reduce context usage for long pages.",
+      "Use fetch_content when you need to clone or explore a git repository.",
+      "Use the summarize parameter to reduce context usage for long pages or large repos.",
+      "Use the branch parameter to clone a specific git branch (only applies to repo URLs).",
     ],
     parameters: Type.Object({
       url: Type.String({ description: "URL to fetch" }),
@@ -120,21 +337,35 @@ export function createFetchContentTool(_pi: ExtensionAPI) {
             "Optional directed prompt for summarization (e.g., 'find all references to bananas'). When provided, the content is summarized by a subagent instead of returned in full.",
         }),
       ),
+      branch: Type.Optional(
+        Type.String({
+          description:
+            "Git branch to clone (only applies when URL is detected as a git repository). Defaults to the repository's default branch.",
+        }),
+      ),
     }),
 
     async execute(
       _toolCallId: string, // Required by tool interface; not used internally
-      params: { url: string; summarize?: string },
+      params: { url: string; summarize?: string; branch?: string },
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<FetchContentDetails> | undefined,
       ctx: ExtensionContext,
     ) {
       const { url, summarize } = params;
 
-      // Validate URL
-      if (!/^https?:\/\//i.test(url)) {
-        throw new Error(`Invalid URL: must start with http:// or https://. Got: ${url}`);
+      // Validate URL scheme: accept http/https and git@ SSH URLs
+      if (!(/^https?:\/\//i.test(url) || /^git@/i.test(url))) {
+        throw new Error(`Invalid URL: must start with http:// or https://, or use SSH (git@) scheme. Got: ${url}`);
       }
+
+      // --- Repo detection and routing ---
+      const repoResult = isRepoUrl(url);
+      if (repoResult.isRepo) {
+        return executeRepoFetch(pi, params, repoResult, signal, onUpdate, ctx);
+      }
+
+      // --- Web fetch flow (existing logic) ---
 
       // SSRF protection: validate URL against internal/private addresses
       await validateUrlForSsrf(url);
@@ -142,7 +373,7 @@ export function createFetchContentTool(_pi: ExtensionAPI) {
       // Streaming: fetching
       onUpdate?.({
         content: [{ type: "text", text: `Fetching ${url}...` }],
-        details: { status: "fetching" },
+        details: { status: "fetching", type: "web" },
       });
 
       // Fetch with manual redirect following (SSRF protection)
@@ -226,7 +457,7 @@ export function createFetchContentTool(_pi: ExtensionAPI) {
       } else if (contentType.includes("text/html") || contentType.includes("application/xhtml")) {
         onUpdate?.({
           content: [{ type: "text", text: "Converting HTML to markdown..." }],
-          details: { status: "converting" },
+          details: { status: "converting", type: "web" },
         });
 
         const result = htmlToMarkdown(rawText, finalUrl);
@@ -247,7 +478,6 @@ export function createFetchContentTool(_pi: ExtensionAPI) {
           title,
           cwd: ctx.cwd,
           signal,
-          // Cast to match summarizeWithSubagent's expected callback type
           onUpdate: onUpdate as
             | ((update: { content: Array<{ type: string; text: string }>; details: { status: string } }) => void)
             | undefined,
@@ -261,6 +491,7 @@ export function createFetchContentTool(_pi: ExtensionAPI) {
             summarized: true,
             summarizePrompt: subResult.summarizePrompt,
             contentLength: markdown.length,
+            type: "web" as const,
           },
         };
       }
@@ -279,9 +510,9 @@ export function createFetchContentTool(_pi: ExtensionAPI) {
         // is returned in `fullOutputPath` so the agent/user can access the full
         // output later. Cleanup is deferred to the OS (tmpdir) or a separate
         // maintenance process.
-        const tempDir = await mkdtemp(join(tmpdir(), "pi-fetch-"));
-        fullOutputPath = join(tempDir, "content.md");
-        await writeFile(fullOutputPath, markdown, "utf8");
+        const tempDir = await fs.mkdtemp(path.join(tmpdir(), "pi-fetch-"));
+        fullOutputPath = path.join(tempDir, "content.md");
+        await fs.writeFile(fullOutputPath, markdown, "utf8");
         resultText += `\n\n[Output truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}). Full output saved to: ${fullOutputPath}]`;
       }
 
@@ -297,11 +528,12 @@ export function createFetchContentTool(_pi: ExtensionAPI) {
           contentLength: markdown.length,
           truncated: truncation.truncated,
           fullOutputPath,
+          type: "web" as const,
         },
       };
     },
 
-    renderCall(args: { url?: string; summarize?: string }, theme: Theme) {
+    renderCall(args: { url?: string; summarize?: string; branch?: string }, theme: Theme) {
       const text = renderToolCall("fetch_content", { url: args.url, summarize: args.summarize }, theme);
       return new Text(text, 0, 0);
     },
@@ -312,6 +544,18 @@ export function createFetchContentTool(_pi: ExtensionAPI) {
       theme: Theme,
     ) {
       const details = result.details;
+
+      // Repo result
+      if (details?.type === "repo") {
+        const text = renderToolResult(result, details as unknown as Record<string, unknown>, { isPartial }, theme, {
+          showOwnerRepo: details.owner && details.repo ? { owner: details.owner, repo: details.repo } : undefined,
+          showSummarized: details.summarized,
+          showTargetPath: details.targetPath,
+        });
+        return new Text(text, 0, 0);
+      }
+
+      // Web result (default)
       const text = renderToolResult(result, details as unknown as Record<string, unknown>, { isPartial }, theme, {
         showUrl: details?.url,
         showTruncated: details?.truncated,

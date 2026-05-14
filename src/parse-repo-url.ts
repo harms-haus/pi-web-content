@@ -11,8 +11,8 @@ export interface RepoInfo {
   repo: string;
 }
 
-/** Regex for valid repository owner/name characters */
-const validName = /^[a-zA-Z0-9._-]+$/;
+/** Regex for valid repository owner/name characters (allows optional leading ~ for SourceHut) */
+const validName = /^~?[a-zA-Z0-9._-]+$/;
 
 /**
  * Parse a git repository URL and extract owner/repo information.

@@ -1,40 +1,32 @@
 # pi-web-content
 
-A [pi](https://pi.dev) extension that adds tools for fetching web content and cloning git repositories directly into your agent's context.
+A [pi](https://pi.dev) extension that adds a unified `fetch_content` tool for fetching web content and cloning git repositories directly into your agent's context. The tool auto-detects whether a URL is a web page or a git repository and handles it accordingly.
 
 ## Tools
 
 ### `fetch_content`
 
-Fetch a URL and convert its HTML content to clean markdown. Uses Mozilla Readability to strip navigation, ads, and sidebars, then Turndown to convert to GitHub Flavored Markdown.
+Fetch a URL — either a web page or a git repository — and bring its content into your agent's context. The tool automatically detects git repository URLs (GitHub, GitLab, Bitbucket, etc.) and clones them; all other URLs are fetched as web content and converted to clean markdown.
+
+**Web content** uses Mozilla Readability to strip navigation, ads, and sidebars, then Turndown to convert to GitHub Flavored Markdown.
+
+**Git repositories** are shallow-cloned (`--depth 1`) to `/tmp/repository-{owner}/{repo-name}` for exploration.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `url` | string | ✅ | URL to fetch |
-| `summarize` | string | ❌ | Directed prompt for summarization (e.g., "find all references to bananas") |
+| `url` | string | ✅ | URL to fetch (web page or git repository) |
+| `summarize` | string | ❌ | Directed prompt for summarization |
+| `branch` | string | ❌ | Git branch to clone (only for repository URLs) |
 
-When `summarize` is provided, a pi subagent processes the full content with your prompt and returns a summary instead of the full markdown — reducing context usage.
-
-**Example LLM usage:**
-- "Read this article: https://example.com/blog/post" → full markdown
-- "Summarize the key points from https://example.com/docs/api" → summarized
-
-### `fetch_repo`
-
-Clone a git repository to `/tmp/repository-{owner}/{repo-name}` for exploration. Performs a shallow clone (`--depth 1`) for speed.
-
-**Parameters:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `url` | string | ✅ | Git repository URL (HTTPS or SSH) |
-| `summarize` | string | ❌ | Directed prompt for repo analysis |
-
-When `summarize` is provided, a pi subagent explores the cloned repo using its full tool set (read, find, grep, etc.) and returns a summary. Otherwise, returns the local path to the cloned repository.
+When `summarize` is provided, a pi subagent processes the full content with your prompt and returns a summary instead — reducing context usage.
 
 **Example LLM usage:**
-- "Clone https://github.com/user/repo so I can explore it" → returns local path
-- "Give me an overview of the architecture in https://github.com/user/repo" → summarized analysis
+- Web: "Read this article: https://example.com/blog/post" → full markdown
+- Web summary: "Summarize https://example.com/docs/api" → summarized
+- Repo: "Explore https://github.com/user/repo" → cloned to /tmp/repository-user/repo
+- Repo summary: "Give me an overview of https://github.com/user/repo" → summarized analysis
+- Specific branch: "Explore https://github.com/user/repo" with branch="develop" → cloned develop branch
 
 ## Install
 
@@ -63,7 +55,7 @@ pi -e git:github.com/harms-haus/pi-web-content
 ## Requirements
 
 - [pi](https://pi.dev) coding agent
-- [git](https://git-scm.com) (for `fetch_repo`)
+- [git](https://git-scm.com) (for repository URLs)
 - Node.js 20+
 
 ## Security
@@ -79,10 +71,15 @@ This extension includes:
 
 ```
 src/
-├── index.ts          # Extension entry point
-├── fetch-content.ts  # Web content → markdown tool
-├── fetch-repo.ts     # Git repository cloning tool
-└── subagent.ts       # Pi subprocess invocation for summarization
+├── index.ts              # Extension entry point
+├── fetch-content.ts      # Unified tool: web content + git repos
+├── detect-repo-url.ts    # Git repository URL detection
+├── parse-repo-url.ts     # Git URL owner/repo extraction
+├── subagent.ts           # Pi subprocess invocation
+├── summarize.ts          # Shared summarization helper
+├── ssrf.ts               # SSRF protection
+├── html-to-markdown.ts   # HTML to Markdown conversion
+└── tool-renderers.ts     # Shared TUI rendering helpers
 ```
 
 Dependencies:
