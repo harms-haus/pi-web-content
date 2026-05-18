@@ -5,7 +5,8 @@
   "type": "module",
   "main": "src/index.ts",
   "files": [
-    "src/**/*.{ts,js,map}",
+    "src/**/*.ts",
+    "!src/__tests__/**",
     "docs/",
     "README.md",
     "LICENSE",
@@ -17,6 +18,7 @@
   "engines": {
     "node": ">=20.0.0"
   },
+  "author": "harms-haus",
   "keywords": [
     "pi-package"
   ],
@@ -33,7 +35,8 @@
     "format:check": "prettier --check src/",
     "test": "npx vitest run",
     "test:coverage": "vitest run --coverage",
-    "typecheck": "npx tsc --noEmit"
+    "typecheck": "npx tsc --noEmit",
+    "lint:fix": "eslint --fix src/"
   },
   "license": "MIT",
   "dependencies": {
@@ -43,12 +46,14 @@
     "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
+    "@eslint/js": "^9.0.0",
     "@types/jsdom": "^28.0.3",
     "@types/turndown": "^5.0.5",
     "@vitest/coverage-v8": "^4.1.6",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.8.3",
+    "typescript": "^5.0.0",
     "typescript-eslint": "^8.59.3",
     "vitest": "^4.1.6"
   },
@@ -58,6 +63,10 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/harms-haus/pi-web-content.git"
   },
   "overrides": {
     "@mistralai/mistralai": "npm:empty-npm-package@1.0.0"
