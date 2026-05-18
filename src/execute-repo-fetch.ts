@@ -58,15 +58,11 @@ export async function executeRepoFetch(
     if (sshHostMatch) {
       const hostname = sshHostMatch[1];
       if (isBlockedHostname(hostname)) {
-        throw new Error(
-          `Blocked: cannot clone from internal/private hostname (${hostname}).`,
-        );
+        throw new Error(`Blocked: cannot clone from internal/private hostname (${hostname}).`);
       }
       const blocked = await isBlockedByDns(hostname);
       if (blocked) {
-        throw new Error(
-          `Blocked: resolved IP for ${hostname} is internal/private.`,
-        );
+        throw new Error(`Blocked: resolved IP for ${hostname} is internal/private.`);
       }
     }
   }

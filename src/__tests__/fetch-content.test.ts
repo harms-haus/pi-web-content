@@ -1110,9 +1110,7 @@ describe("fetch_content tool", () => {
           undefined,
           createContext(),
         ),
-      ).rejects.toThrow(
-        "Blocked: resolved IP for evil.example.com is internal/private.",
-      );
+      ).rejects.toThrow("Blocked: resolved IP for evil.example.com is internal/private.");
 
       expect(ssrf.isBlockedHostname).toHaveBeenCalledWith("evil.example.com");
       expect(ssrf.isBlockedByDns).toHaveBeenCalledWith("evil.example.com");
