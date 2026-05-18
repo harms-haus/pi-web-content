@@ -61,7 +61,11 @@ describe("renderToolCall", () => {
 
   it("truncates long summarize at 40 chars", () => {
     const longSummarize = "a".repeat(100);
-    const result = renderToolCall("fetch_content", { url: "https://example.com", summarize: longSummarize }, theme);
+    const result = renderToolCall(
+      "fetch_content",
+      { url: "https://example.com", summarize: longSummarize },
+      theme,
+    );
     expect(result.length).toBeLessThan(
       `[bold:fetch_content ][accent:https://example.com][dim: — ${longSummarize}]`.length,
     );
@@ -87,7 +91,9 @@ describe("renderToolResult", () => {
   });
 
   it("shows URL in accent color", () => {
-    const result = renderToolResult({}, {}, { isPartial: false }, theme, { showUrl: "https://example.com" });
+    const result = renderToolResult({}, {}, { isPartial: false }, theme, {
+      showUrl: "https://example.com",
+    });
     expect(result).toContain("https://example.com");
   });
 
@@ -99,8 +105,30 @@ describe("renderToolResult", () => {
   });
 
   it("shows status badges (truncated, summarized)", () => {
-    const result = renderToolResult({}, {}, { isPartial: false }, theme, { showTruncated: true, showSummarized: true });
+    const result = renderToolResult({}, {}, { isPartial: false }, theme, {
+      showTruncated: true,
+      showSummarized: true,
+    });
     expect(result).toContain("truncated");
     expect(result).toContain("summarized");
+  });
+
+  it("shows title from details", () => {
+    const result = renderToolResult({}, { title: "My Page Title" }, { isPartial: false }, theme);
+    expect(result).toContain("My Page Title");
+  });
+
+  it("shows content length", () => {
+    const result = renderToolResult({}, {}, { isPartial: false }, theme, {
+      showContentLength: 1024,
+    });
+    expect(result).toContain("1.0KB");
+  });
+
+  it("shows target path", () => {
+    const result = renderToolResult({}, {}, { isPartial: false }, theme, {
+      showTargetPath: "/tmp/repo",
+    });
+    expect(result).toContain("/tmp/repo");
   });
 });

@@ -4,8 +4,6 @@
  * Extracted from fetch-content.ts for reuse across tools.
  */
 
-import { Readability } from "@mozilla/readability";
-import { JSDOM } from "jsdom";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 
@@ -32,12 +30,15 @@ export const BINARY_TYPES = [
   "application/x-tar",
 ];
 
-export interface HtmlToMarkdownResult {
+interface HtmlToMarkdownResult {
   title: string;
   markdown: string;
 }
 
-export function htmlToMarkdown(html: string, url: string): HtmlToMarkdownResult {
+export async function htmlToMarkdown(html: string, url: string): Promise<HtmlToMarkdownResult> {
+  const { JSDOM } = await import("jsdom");
+  const { Readability } = await import("@mozilla/readability");
+
   const dom = new JSDOM(html, { url });
   const reader = new Readability(dom.window.document);
   const article = reader.parse();
@@ -53,6 +54,7 @@ export function htmlToMarkdown(html: string, url: string): HtmlToMarkdownResult 
     // Fall back to converting the full body.
     title = dom.window.document.title || url;
     const body = dom.window.document.body;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- body can be null in some JSDOM configurations
     contentHtml = body ? body.innerHTML : html;
   }
 

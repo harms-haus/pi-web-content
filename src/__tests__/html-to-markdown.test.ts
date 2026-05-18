@@ -3,62 +3,62 @@ import { htmlToMarkdown, BINARY_TYPES } from "../html-to-markdown.js";
 
 describe("htmlToMarkdown", () => {
   describe("simple HTML conversion", () => {
-    it("converts headings to ATX-style markdown", () => {
+    it("converts headings to ATX-style markdown", async () => {
       const html = "<h1>Hello World</h1>";
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.markdown).toContain("# Hello World");
     });
 
-    it("converts paragraphs", () => {
+    it("converts paragraphs", async () => {
       const html = "<p>This is a paragraph.</p>";
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.markdown).toContain("This is a paragraph.");
     });
 
-    it("converts bold text", () => {
+    it("converts bold text", async () => {
       const html = "<p>This is <strong>bold</strong> text.</p>";
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.markdown).toContain("**bold**");
     });
 
-    it("converts italic text", () => {
+    it("converts italic text", async () => {
       const html = "<p>This is <em>italic</em> text.</p>";
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.markdown).toContain("*italic*");
     });
 
-    it("converts links", () => {
+    it("converts links", async () => {
       const html = '<p>Visit <a href="https://example.com">Example</a></p>';
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       // Turndown normalizes URLs, adding trailing slash
       expect(result.markdown).toContain("[Example](https://example.com/)");
     });
 
-    it("converts unordered lists", () => {
+    it("converts unordered lists", async () => {
       const html = "<ul><li>Item 1</li><li>Item 2</li></ul>";
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       // Turndown uses "-   " (dash + spaces) for list items
       expect(result.markdown).toContain("Item 1");
       expect(result.markdown).toContain("Item 2");
       expect(result.markdown).toMatch(/^-/m);
     });
 
-    it("converts code blocks", () => {
-      const html = '<pre><code>const x = 1;</code></pre>';
-      const result = htmlToMarkdown(html, "https://example.com");
+    it("converts code blocks", async () => {
+      const html = "<pre><code>const x = 1;</code></pre>";
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.markdown).toContain("```");
       expect(result.markdown).toContain("const x = 1;");
     });
 
-    it("converts inline code", () => {
+    it("converts inline code", async () => {
       const html = "<p>Use the <code>console.log</code> function.</p>";
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.markdown).toContain("`console.log`");
     });
   });
 
   describe("article with title extraction", () => {
-    it("extracts title from article content", () => {
+    it("extracts title from article content", async () => {
       const html = `
         <html>
           <head><title>My Article Title</title></head>
@@ -70,12 +70,12 @@ describe("htmlToMarkdown", () => {
           </body>
         </html>
       `;
-      const result = htmlToMarkdown(html, "https://example.com/article");
+      const result = await htmlToMarkdown(html, "https://example.com/article");
       expect(result.title).toBe("My Article Title");
       expect(result.markdown).toContain("article content");
     });
 
-    it("extracts content from article element", () => {
+    it("extracts content from article element", async () => {
       const html = `
         <html>
           <head><title>Test</title></head>
@@ -87,13 +87,13 @@ describe("htmlToMarkdown", () => {
           </body>
         </html>
       `;
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.markdown).toContain("Article body text here.");
     });
   });
 
   describe("non-article page fallback", () => {
-    it("falls back to body when Readability cannot parse", () => {
+    it("falls back to body when Readability cannot parse", async () => {
       const html = `
         <html>
           <head><title>Fallback Title</title></head>
@@ -104,11 +104,11 @@ describe("htmlToMarkdown", () => {
           </body>
         </html>
       `;
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.markdown).toContain("Some content without article structure.");
     });
 
-    it("uses URL as fallback title when no title available", () => {
+    it("uses URL as fallback title when no title available", async () => {
       const html = `
         <html>
           <head></head>
@@ -117,13 +117,13 @@ describe("htmlToMarkdown", () => {
           </body>
         </html>
       `;
-      const result = htmlToMarkdown(html, "https://example.com/page");
+      const result = await htmlToMarkdown(html, "https://example.com/page");
       expect(result.title).toBe("https://example.com/page");
     });
   });
 
   describe("scripts and styles removed", () => {
-    it("removes script tags", () => {
+    it("removes script tags", async () => {
       const html = `
         <html>
           <body>
@@ -132,12 +132,12 @@ describe("htmlToMarkdown", () => {
           </body>
         </html>
       `;
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.markdown).not.toContain("alert");
       expect(result.markdown).not.toContain("<script>");
     });
 
-    it("removes style tags", () => {
+    it("removes style tags", async () => {
       const html = `
         <html>
           <body>
@@ -146,12 +146,12 @@ describe("htmlToMarkdown", () => {
           </body>
         </html>
       `;
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.markdown).not.toContain("display: none");
       expect(result.markdown).not.toContain("<style>");
     });
 
-    it("removes iframe tags", () => {
+    it("removes iframe tags", async () => {
       const html = `
         <html>
           <body>
@@ -160,12 +160,12 @@ describe("htmlToMarkdown", () => {
           </body>
         </html>
       `;
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.markdown).not.toContain("iframe");
       expect(result.markdown).not.toContain("evil.com");
     });
 
-    it("removes noscript tags", () => {
+    it("removes noscript tags", async () => {
       const html = `
         <html>
           <body>
@@ -174,13 +174,13 @@ describe("htmlToMarkdown", () => {
           </body>
         </html>
       `;
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.markdown).not.toContain("noscript");
     });
   });
 
   describe("GFM tables", () => {
-    it("converts HTML tables to GFM markdown", () => {
+    it("converts HTML tables to GFM markdown", async () => {
       const html = `
         <table>
           <thead>
@@ -192,7 +192,7 @@ describe("htmlToMarkdown", () => {
           </tbody>
         </table>
       `;
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.markdown).toContain("|");
       expect(result.markdown).toContain("Header 1");
       expect(result.markdown).toContain("Header 2");
@@ -202,28 +202,28 @@ describe("htmlToMarkdown", () => {
   });
 
   describe("empty and malformed HTML", () => {
-    it("handles empty HTML string", () => {
-      const result = htmlToMarkdown("", "https://example.com");
+    it("handles empty HTML string", async () => {
+      const result = await htmlToMarkdown("", "https://example.com");
       expect(result).toHaveProperty("title");
       expect(result).toHaveProperty("markdown");
     });
 
-    it("handles HTML with only whitespace", () => {
-      const result = htmlToMarkdown("   ", "https://example.com");
+    it("handles HTML with only whitespace", async () => {
+      const result = await htmlToMarkdown("   ", "https://example.com");
       expect(result).toHaveProperty("title");
       expect(result).toHaveProperty("markdown");
     });
 
-    it("handles malformed HTML gracefully", () => {
+    it("handles malformed HTML gracefully", async () => {
       const html = "<p>Unclosed paragraph<div>Another unclosed";
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result).toHaveProperty("title");
       expect(result).toHaveProperty("markdown");
     });
 
-    it("handles HTML with only script tags", () => {
+    it("handles HTML with only script tags", async () => {
       const html = "<script>alert('hi');</script>";
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result).toHaveProperty("title");
       expect(result).toHaveProperty("markdown");
       expect(result.markdown).not.toContain("alert");
@@ -231,7 +231,7 @@ describe("htmlToMarkdown", () => {
   });
 
   describe("complex documents", () => {
-    it("handles nested elements", () => {
+    it("handles nested elements", async () => {
       const html = `
         <html>
           <head><title>Main Title</title></head>
@@ -247,7 +247,7 @@ describe("htmlToMarkdown", () => {
           </body>
         </html>
       `;
-      const result = htmlToMarkdown(html, "https://example.com");
+      const result = await htmlToMarkdown(html, "https://example.com");
       expect(result.title).toBe("Main Title");
       // Readability extracts the title separately; the h1 is not included in content
       expect(result.markdown).toContain("**bold");

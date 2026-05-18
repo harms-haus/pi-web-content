@@ -21,7 +21,11 @@ export function truncateForDisplay(str: string, maxLen: number): string {
  * Shows bold tool name + colored URL (truncated at 60 chars) +
  * optional dim summarize preview (truncated at 40 chars).
  */
-export function renderToolCall(toolName: string, args: { url?: string; summarize?: string }, theme: Theme): string {
+export function renderToolCall(
+  toolName: string,
+  args: { url?: string; summarize?: string },
+  theme: Theme,
+): string {
   const url: string = args.url || "...";
   const shortUrl = truncateForDisplay(url, 60);
   let text = theme.fg("toolTitle", theme.bold(`${toolName} `));
@@ -36,7 +40,7 @@ export function renderToolCall(toolName: string, args: { url?: string; summarize
 /**
  * Options controlling which detail fields are shown in the result display.
  */
-export interface RenderToolResultOptions {
+interface RenderToolResultOptions {
   /** Display a URL in accent color */
   showUrl?: string;
   /** Display owner/repo in accent color as "owner/repo" */
@@ -56,6 +60,7 @@ export interface RenderToolResultOptions {
  *
  * Shows ✓/✗ icon, identity, and status badges based on the provided options.
  */
+// eslint-disable-next-line complexity -- multi-branch content rendering for repo/web/summarize/binary
 export function renderToolResult(
   result: { isError?: boolean },
   details: Record<string, unknown>,
@@ -80,7 +85,9 @@ export function renderToolResult(
   }
 
   // Title from details (used by fetch_content)
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- details?.title may be undefined in early streaming updates
   if (details?.title) {
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string, @typescript-eslint/restrict-template-expressions -- details fields are dynamically typed from streaming updates
     text += ` ${theme.fg("dim", `— ${details.title}`)}`;
   }
 

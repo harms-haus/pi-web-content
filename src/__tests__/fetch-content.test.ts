@@ -1,4 +1,6 @@
+import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { tmpdir } from "node:os";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // --- Mocks ---
@@ -6,10 +8,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../ssrf.js", () => ({
   validateUrlForSsrf: vi.fn().mockResolvedValue(undefined),
   validateRedirectForSsrf: vi.fn().mockResolvedValue(undefined),
+  isBlockedHostname: vi.fn().mockReturnValue(false),
+  isBlockedByDns: vi.fn().mockResolvedValue(false),
 }));
 
 vi.mock("../html-to-markdown.js", () => ({
-  htmlToMarkdown: vi.fn().mockReturnValue({ title: "Test Page", markdown: "# Test Page\n\nConverted content." }),
+  htmlToMarkdown: vi
+    .fn()
+    .mockReturnValue({ title: "Test Page", markdown: "# Test Page\n\nConverted content." }),
   BINARY_TYPES: [
     "image/",
     "video/",
@@ -130,7 +136,7 @@ describe("fetch_content tool", () => {
 
   function createContext(overrides: Partial<ExtensionContext> = {}): ExtensionContext {
     return {
-      cwd: "/tmp",
+      cwd: tmpdir(),
       config: {} as Record<string, unknown>,
       ...overrides,
     } as ExtensionContext;
@@ -142,35 +148,65 @@ describe("fetch_content tool", () => {
     it("rejects non-http URLs (ftp://)", async () => {
       const tool = createTool();
       await expect(
-        tool.execute("call-1", { url: "ftp://example.com/file.txt" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "ftp://example.com/file.txt" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow("Invalid URL: must start with http:// or https://");
     });
 
     it("rejects non-http URLs (file://)", async () => {
       const tool = createTool();
       await expect(
-        tool.execute("call-1", { url: "file:///etc/passwd" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "file:///etc/passwd" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow("Invalid URL: must start with http:// or https://");
     });
 
     it("rejects non-http URLs (data:)", async () => {
       const tool = createTool();
       await expect(
-        tool.execute("call-1", { url: "data:text/plain,hello" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "data:text/plain,hello" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow("Invalid URL: must start with http:// or https://");
     });
 
     it("accepts http:// URLs", async () => {
       const tool = createTool();
       mockFetch.mockResolvedValueOnce(createMockResponse());
-      await tool.execute("call-1", { url: "http://example.com/" }, undefined, undefined, createContext());
+      await tool.execute(
+        "call-1",
+        { url: "http://example.com/" },
+        undefined,
+        undefined,
+        createContext(),
+      );
       expect(mockFetch).toHaveBeenCalled();
     });
 
     it("accepts https:// URLs", async () => {
       const tool = createTool();
       mockFetch.mockResolvedValueOnce(createMockResponse());
-      await tool.execute("call-1", { url: "https://example.com/" }, undefined, undefined, createContext());
+      await tool.execute(
+        "call-1",
+        { url: "https://example.com/" },
+        undefined,
+        undefined,
+        createContext(),
+      );
       expect(mockFetch).toHaveBeenCalled();
     });
   });
@@ -181,7 +217,13 @@ describe("fetch_content tool", () => {
     it("calls validateUrlForSsrf before fetching", async () => {
       const tool = createTool();
       mockFetch.mockResolvedValueOnce(createMockResponse());
-      await tool.execute("call-1", { url: "https://example.com/" }, undefined, undefined, createContext());
+      await tool.execute(
+        "call-1",
+        { url: "https://example.com/" },
+        undefined,
+        undefined,
+        createContext(),
+      );
       expect(ssrf.validateUrlForSsrf).toHaveBeenCalledWith("https://example.com/");
     });
 
@@ -191,7 +233,13 @@ describe("fetch_content tool", () => {
         new Error("Blocked: cannot fetch internal/private addresses (localhost)."),
       );
       await expect(
-        tool.execute("call-1", { url: "http://localhost:3000/" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "http://localhost:3000/" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow("Blocked: cannot fetch internal/private addresses");
     });
 
@@ -201,7 +249,13 @@ describe("fetch_content tool", () => {
         new Error("Blocked: cannot fetch internal/private addresses (127.0.0.1)."),
       );
       await expect(
-        tool.execute("call-1", { url: "http://127.0.0.1:8080/" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "http://127.0.0.1:8080/" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow("Blocked: cannot fetch internal/private addresses");
     });
 
@@ -211,7 +265,13 @@ describe("fetch_content tool", () => {
         new Error("Blocked: resolved IP for internal.example.com is internal/private."),
       );
       await expect(
-        tool.execute("call-1", { url: "http://internal.example.com/" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "http://internal.example.com/" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow("Blocked:");
     });
   });
@@ -284,7 +344,13 @@ describe("fetch_content tool", () => {
         }),
       );
       await expect(
-        tool.execute("call-1", { url: "https://example.com/image.png" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "https://example.com/image.png" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow("Unsupported content type");
     });
 
@@ -297,7 +363,13 @@ describe("fetch_content tool", () => {
         }),
       );
       await expect(
-        tool.execute("call-1", { url: "https://example.com/doc.pdf" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "https://example.com/doc.pdf" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow("Unsupported content type");
     });
 
@@ -310,7 +382,13 @@ describe("fetch_content tool", () => {
         }),
       );
       await expect(
-        tool.execute("call-1", { url: "https://example.com/file.bin" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "https://example.com/file.bin" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow("Unsupported content type");
     });
 
@@ -357,10 +435,16 @@ describe("fetch_content tool", () => {
         url: "https://example.com/large",
         body: readableStream,
         bodyUsed: false,
-      } as Response);
+      });
 
       await expect(
-        tool.execute("call-1", { url: "https://example.com/large" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "https://example.com/large" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow(/Response body exceeds maximum size/);
     });
 
@@ -397,7 +481,13 @@ describe("fetch_content tool", () => {
         }),
       );
       await expect(
-        tool.execute("call-1", { url: "https://example.com/missing" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "https://example.com/missing" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow("HTTP 404 Not Found");
     });
 
@@ -410,7 +500,13 @@ describe("fetch_content tool", () => {
         }),
       );
       await expect(
-        tool.execute("call-1", { url: "https://example.com/error" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "https://example.com/error" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow("HTTP 500 Internal Server Error");
     });
 
@@ -418,7 +514,13 @@ describe("fetch_content tool", () => {
       const tool = createTool();
       mockFetch.mockRejectedValueOnce(new Error("Network error"));
       await expect(
-        tool.execute("call-1", { url: "https://example.com/" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "https://example.com/" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow("Failed to fetch");
     });
   });
@@ -473,7 +575,13 @@ describe("fetch_content tool", () => {
       );
 
       await expect(
-        tool.execute("call-1", { url: "https://example.com/redirect" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "https://example.com/redirect" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow("Blocked: redirect to internal/private address");
     });
   });
@@ -495,7 +603,7 @@ describe("fetch_content tool", () => {
       );
 
       expect(summarizeWithSubagent).toHaveBeenCalled();
-      expect(result.details?.summarized).toBe(true);
+      expect(result.details.summarized).toBe(true);
     });
   });
 
@@ -508,7 +616,13 @@ describe("fetch_content tool", () => {
       controller.abort();
 
       await expect(
-        tool.execute("call-1", { url: "https://example.com/" }, controller.signal, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "https://example.com/" },
+          controller.signal,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow(/Fetch cancelled/);
     });
   });
@@ -524,7 +638,10 @@ describe("fetch_content tool", () => {
 
     it("renders a tool call with URL and summarize", () => {
       const tool = createTool();
-      const result = tool.renderCall({ url: "https://example.com/", summarize: "summarize this" }, mockTheme);
+      const result = tool.renderCall(
+        { url: "https://example.com/", summarize: "summarize this" },
+        mockTheme,
+      );
       expect(result).toBeDefined();
     });
   });
@@ -583,7 +700,12 @@ describe("fetch_content tool", () => {
       const result = tool.renderResult(
         {
           content: [{ type: "text", text: "content" }],
-          details: { url: "https://example.com/", truncated: true, contentLength: 50000, type: "web" },
+          details: {
+            url: "https://example.com/",
+            truncated: true,
+            contentLength: 50000,
+            type: "web",
+          },
         },
         { isPartial: false },
         mockTheme,
@@ -596,7 +718,12 @@ describe("fetch_content tool", () => {
       const result = tool.renderResult(
         {
           content: [{ type: "text", text: "summary" }],
-          details: { url: "https://example.com/", summarized: true, contentLength: 10000, type: "web" },
+          details: {
+            url: "https://example.com/",
+            summarized: true,
+            contentLength: 10000,
+            type: "web",
+          },
         },
         { isPartial: false },
         mockTheme,
@@ -612,7 +739,13 @@ describe("fetch_content tool", () => {
       const tool = createTool();
       mockFetch.mockResolvedValueOnce(createMockResponse());
 
-      await tool.execute("call-1", { url: "https://example.com" }, undefined, undefined, createContext());
+      await tool.execute(
+        "call-1",
+        { url: "https://example.com" },
+        undefined,
+        undefined,
+        createContext(),
+      );
 
       expect(mockFetch).toHaveBeenCalled();
       expect(mockExec).not.toHaveBeenCalled();
@@ -637,7 +770,7 @@ describe("fetch_content tool", () => {
 
       expect(mockExec).toHaveBeenCalled();
       expect(mockFetch).not.toHaveBeenCalled();
-      expect(result.details?.type).toBe("repo");
+      expect(result.details.type).toBe("repo");
     });
 
     it("routes SSH URLs to clone path", async () => {
@@ -658,7 +791,7 @@ describe("fetch_content tool", () => {
       );
 
       expect(mockExec).toHaveBeenCalled();
-      expect(result.details?.type).toBe("repo");
+      expect(result.details.type).toBe("repo");
     });
   });
 
@@ -682,8 +815,8 @@ describe("fetch_content tool", () => {
         createContext(),
       );
 
-      expect(result.details?.type).toBe("repo");
-      if (result.details?.type === "repo") {
+      expect(result.details.type).toBe("repo");
+      if (result.details.type === "repo") {
         expect(result.details.targetPath).toContain("repository-owner");
         expect(result.details.targetPath).toContain("repo");
       }
@@ -698,7 +831,13 @@ describe("fetch_content tool", () => {
       });
       mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
 
-      await tool.execute("call-1", { url: "https://github.com/owner/repo" }, undefined, undefined, createContext());
+      await tool.execute(
+        "call-1",
+        { url: "https://github.com/owner/repo" },
+        undefined,
+        undefined,
+        createContext(),
+      );
 
       expect(mockExec).toHaveBeenCalledWith(
         "git",
@@ -732,8 +871,8 @@ describe("fetch_content tool", () => {
         createContext(),
       );
 
-      expect(result.details?.type).toBe("repo");
-      if (result.details?.type === "repo") {
+      expect(result.details.type).toBe("repo");
+      if (result.details.type === "repo") {
         expect(result.details.owner).toBe("owner");
         expect(result.details.repo).toBe("repo");
         expect(result.details.targetPath).toBeDefined();
@@ -795,8 +934,8 @@ describe("fetch_content tool", () => {
         createContext(),
       );
 
-      expect(result.details?.type).toBe("repo");
-      if (result.details?.type === "repo") {
+      expect(result.details.type).toBe("repo");
+      if (result.details.type === "repo") {
         expect(result.details.branch).toBe("develop");
       }
     });
@@ -812,10 +951,20 @@ describe("fetch_content tool", () => {
         scheme: "https",
         sanitizedUrl: "https://github.com/owner/repo",
       });
-      mockExec.mockResolvedValueOnce({ code: 128, stdout: "", stderr: "fatal: repository not found" });
+      mockExec.mockResolvedValueOnce({
+        code: 128,
+        stdout: "",
+        stderr: "fatal: repository not found",
+      });
 
       await expect(
-        tool.execute("call-1", { url: "https://github.com/owner/repo" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow(/git clone failed/);
     });
 
@@ -826,10 +975,20 @@ describe("fetch_content tool", () => {
         scheme: "https",
         sanitizedUrl: "https://github.com/owner/repo",
       });
-      mockExec.mockResolvedValueOnce({ code: 128, stdout: "", stderr: "fatal: repository not found" });
+      mockExec.mockResolvedValueOnce({
+        code: 128,
+        stdout: "",
+        stderr: "fatal: repository not found",
+      });
 
       await expect(
-        tool.execute("call-1", { url: "https://github.com/owner/repo" }, undefined, undefined, createContext()),
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
       ).rejects.toThrow(/git clone failed/);
 
       expect(fs.rm).toHaveBeenCalled();
@@ -858,14 +1017,14 @@ describe("fetch_content tool", () => {
       );
 
       expect(summarizeWithSubagent).toHaveBeenCalled();
-      expect(result.details?.summarized).toBe(true);
+      expect(result.details.summarized).toBe(true);
     });
   });
 
   // --- Git Clone with SSH URL ---
 
   describe("git clone with SSH URL", () => {
-    it("accepts SSH URL without SSRF validation", async () => {
+    it("accepts SSH URL to public host without calling validateUrlForSsrf", async () => {
       const tool = createTool();
       vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
         isRepo: true,
@@ -874,10 +1033,115 @@ describe("fetch_content tool", () => {
       });
       mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
 
-      await tool.execute("call-1", { url: "git@github.com:owner/repo.git" }, undefined, undefined, createContext());
+      await tool.execute(
+        "call-1",
+        { url: "git@github.com:owner/repo.git" },
+        undefined,
+        undefined,
+        createContext(),
+      );
 
       expect(ssrf.validateUrlForSsrf).not.toHaveBeenCalled();
+      expect(ssrf.isBlockedHostname).toHaveBeenCalledWith("github.com");
       expect(mockExec).toHaveBeenCalled();
+    });
+
+    it("blocks SSH URL to internal IP (192.168.1.1)", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "ssh",
+        sanitizedUrl: "git@192.168.1.1:owner/repo",
+      });
+      vi.mocked(ssrf.isBlockedHostname).mockReturnValueOnce(true);
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "git@192.168.1.1:owner/repo" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Blocked: cannot clone from internal/private hostname (192.168.1.1).");
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("blocks SSH URL to localhost", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "ssh",
+        sanitizedUrl: "git@localhost:owner/repo",
+      });
+      vi.mocked(ssrf.isBlockedHostname).mockReturnValueOnce(true);
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "git@localhost:owner/repo" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Blocked: cannot clone from internal/private hostname (localhost).");
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("blocks SSH URL when DNS resolves to internal IP", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "ssh",
+        sanitizedUrl: "git@evil.example.com:owner/repo",
+      });
+      // isBlockedHostname returns false (not in static list)
+      vi.mocked(ssrf.isBlockedHostname).mockReturnValueOnce(false);
+      // But DNS resolves to internal IP
+      vi.mocked(ssrf.isBlockedByDns).mockResolvedValueOnce(true);
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "git@evil.example.com:owner/repo" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow(
+        "Blocked: resolved IP for evil.example.com is internal/private.",
+      );
+
+      expect(ssrf.isBlockedHostname).toHaveBeenCalledWith("evil.example.com");
+      expect(ssrf.isBlockedByDns).toHaveBeenCalledWith("evil.example.com");
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("allows SSH URL to public host that passes DNS check", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "ssh",
+        sanitizedUrl: "git@github.com:owner/repo.git",
+      });
+      vi.mocked(ssrf.isBlockedHostname).mockReturnValueOnce(false);
+      vi.mocked(ssrf.isBlockedByDns).mockResolvedValueOnce(false);
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      const result = await tool.execute(
+        "call-1",
+        { url: "git@github.com:owner/repo.git" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      expect(ssrf.isBlockedHostname).toHaveBeenCalledWith("github.com");
+      expect(ssrf.isBlockedByDns).toHaveBeenCalledWith("github.com");
+      expect(mockExec).toHaveBeenCalled();
+      expect(result.details.type).toBe("repo");
     });
   });
 
@@ -893,10 +1157,499 @@ describe("fetch_content tool", () => {
       });
       mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
 
-      await tool.execute("call-1", { url: "https://github.com/owner/repo" }, undefined, undefined, createContext());
+      await tool.execute(
+        "call-1",
+        { url: "https://github.com/owner/repo" },
+        undefined,
+        undefined,
+        createContext(),
+      );
 
       expect(ssrf.validateUrlForSsrf).toHaveBeenCalledWith("https://github.com/owner/repo");
       expect(mockExec).toHaveBeenCalled();
+    });
+  });
+
+  // --- Redirect Loop Exhaustion (Todo #14) ---
+
+  describe("redirect loop exhaustion", () => {
+    it("stops after >10 consecutive redirects and throws an error", async () => {
+      const tool = createTool();
+
+      // Return 12 consecutive 301 redirects — more than MAX_REDIRECTS (10)
+      for (let i = 0; i < 12; i++) {
+        mockFetch.mockResolvedValueOnce({
+          status: 301,
+          statusText: "Moved Permanently",
+          ok: false,
+          headers: new Headers({ location: `https://example.com/redirect-${i + 1}` }),
+          url: `https://example.com/redirect-${i}`,
+          body: null,
+          bodyUsed: false,
+        });
+      }
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://example.com/start" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow(/HTTP 301/);
+
+      // The loop runs MAX_REDIRECTS+1 = 11 iterations (i=0..10), so fetch is called 11 times
+      expect(mockFetch).toHaveBeenCalledTimes(11);
+    });
+
+    it("does not infinite loop on redirect chains", async () => {
+      const tool = createTool();
+
+      // Return a very large number of redirects to confirm bounded behavior
+      for (let i = 0; i < 100; i++) {
+        mockFetch.mockResolvedValueOnce({
+          status: 302,
+          statusText: "Found",
+          ok: false,
+          headers: new Headers({ location: `https://example.com/r${i + 1}` }),
+          url: `https://example.com/r${i}`,
+          body: null,
+          bodyUsed: false,
+        });
+      }
+
+      // Must resolve quickly (not hang) and throw an error
+      const resultPromise = tool.execute(
+        "call-1",
+        { url: "https://example.com/start" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      // Use a timeout to ensure it doesn't hang
+      await expect(
+        Promise.race([
+          resultPromise
+            .then(() => {
+              return "resolved";
+            })
+            .catch(() => {
+              return "rejected";
+            }),
+          new Promise<string>((resolve) => {
+            setTimeout(() => {
+              resolve("timeout");
+            }, 5000);
+          }),
+        ]),
+      ).resolves.toBe("rejected");
+
+      // Verify fetch was called a bounded number of times (11, not 100)
+      expect(mockFetch.mock.calls.length).toBeLessThanOrEqual(11);
+    });
+  });
+
+  // --- Branch Parameter Injection (Todo #15) ---
+
+  describe("branch parameter injection", () => {
+    it("passes branch parameter as array args to git clone (safe from injection)", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      await tool.execute(
+        "call-1",
+        { url: "https://github.com/owner/repo", branch: "feature/test" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      // Verify exec is called with an array (not shell string), containing --branch and the branch name
+      const execCall = mockExec.mock.calls[0];
+      expect(execCall[0]).toBe("git");
+      expect(Array.isArray(execCall[1])).toBe(true);
+      expect(execCall[1]).toContainEqual("--branch");
+      expect(execCall[1]).toContainEqual("feature/test");
+    });
+
+    it("does not include --branch flag when branch is undefined", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      await tool.execute(
+        "call-1",
+        { url: "https://github.com/owner/repo" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      const execArgs = mockExec.mock.calls[0][1] as string[];
+      expect(execArgs).not.toContain("--branch");
+    });
+  });
+
+  // --- Branch Validation (HIGH Security Issue Fix) ---
+
+  describe("branch validation", () => {
+    it("accepts valid branch name with slashes and hyphens", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      mockExec.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://github.com/owner/repo", branch: "feature/test-branch" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      expect(result.details.type).toBe("repo");
+      if (result.details.type === "repo") {
+        expect(result.details.branch).toBe("feature/test-branch");
+      }
+      expect(mockExec).toHaveBeenCalledWith(
+        "git",
+        expect.arrayContaining(["--branch", "feature/test-branch"]),
+        expect.any(Object),
+      );
+    });
+
+    it("rejects branch with shell metacharacters", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo", branch: "feature; rm -rf /" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid branch name");
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("rejects branch with spaces", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo", branch: "my branch" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid branch name");
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("rejects branch with control characters", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo", branch: "feature\n\tbranch" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid branch name");
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("rejects very long branch name (>256 chars)", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+
+      const longBranch = "a".repeat(257);
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo", branch: longBranch },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid branch name");
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("rejects branch containing double dot (..)", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo", branch: "feature/../test" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid branch name");
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("rejects branch ending with slash", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo", branch: "feature/test/" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid branch name");
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("rejects branch ending with period", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo", branch: "feature/test." },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid branch name");
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("rejects branch ending with .lock", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo", branch: "feature/test.lock" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid branch name");
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("rejects branch containing tilde (~)", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo", branch: "feature~test" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid branch name");
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("rejects branch containing caret (^)", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo", branch: "feature^test" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid branch name");
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("rejects branch containing colon (:)", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo", branch: "feature:test" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid branch name");
+
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+  });
+
+  // --- readResponseWithSizeLimit Edge Cases (Todo #16) ---
+
+  describe("readResponseWithSizeLimit edge cases", () => {
+    it("handles response with null body gracefully", async () => {
+      const tool = createTool();
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        statusText: "OK",
+        ok: true,
+        headers: new Headers({ "content-type": "text/plain" }),
+        url: "https://example.com/empty",
+        body: null,
+        bodyUsed: false,
+      });
+
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://example.com/empty" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      // Should not throw; should return a result with empty-ish content
+      expect(result).toBeDefined();
+      expect(result.content[0].text).toBeDefined();
+    });
+
+    it("handles response with empty stream body", async () => {
+      const tool = createTool();
+      const emptyStream = new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        statusText: "OK",
+        ok: true,
+        headers: new Headers({ "content-type": "text/plain" }),
+        url: "https://example.com/empty-stream",
+        body: emptyStream,
+        bodyUsed: false,
+      });
+
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://example.com/empty-stream" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      expect(result).toBeDefined();
+      expect(result.content[0].text).toBeDefined();
+    });
+  });
+
+  // --- Empty Content-Type Header (Todo #17) ---
+
+  describe("empty content-type header", () => {
+    it("handles empty content-type as generic raw content", async () => {
+      const tool = createTool();
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({
+          contentType: "",
+          body: "Some raw content",
+        }),
+      );
+
+      const result = await tool.execute(
+        "call-1",
+        { url: "https://example.com/raw" },
+        undefined,
+        undefined,
+        createContext(),
+      );
+
+      // Empty content-type falls through to the else branch which renders raw content
+      expect(result.content[0].text).toContain("Some raw content");
+      // Should NOT be wrapped in a code block (that's for text/plain / JSON)
+      expect(result.content[0].text).not.toContain("Text Response");
+      expect(result.content[0].text).not.toContain("JSON Response");
     });
   });
 
@@ -905,6 +1658,7 @@ describe("fetch_content tool", () => {
   describe("renderResult for repo results", () => {
     it("shows owner/repo for repo results", () => {
       const tool = createTool();
+      const testTargetPath = path.join(tmpdir(), "repository-owner", "repo");
       tool.renderResult(
         {
           content: [{ type: "text", text: "cloned" }],
@@ -912,7 +1666,7 @@ describe("fetch_content tool", () => {
             type: "repo",
             owner: "owner",
             repo: "repo",
-            targetPath: "/tmp/repository-owner/repo",
+            targetPath: testTargetPath,
             summarized: false,
           },
         },
@@ -933,6 +1687,7 @@ describe("fetch_content tool", () => {
 
     it("shows targetPath for repo results", () => {
       const tool = createTool();
+      const testTargetPath = path.join(tmpdir(), "repository-owner", "repo");
       tool.renderResult(
         {
           content: [{ type: "text", text: "cloned" }],
@@ -940,7 +1695,7 @@ describe("fetch_content tool", () => {
             type: "repo",
             owner: "owner",
             repo: "repo",
-            targetPath: "/tmp/repository-owner/repo",
+            targetPath: testTargetPath,
             summarized: false,
           },
         },
@@ -954,9 +1709,147 @@ describe("fetch_content tool", () => {
         expect.anything(),
         expect.anything(),
         expect.objectContaining({
-          showTargetPath: "/tmp/repository-owner/repo",
+          showTargetPath: testTargetPath,
         }),
       );
+    });
+  });
+
+  // --- Repo edge cases: parseRepoUrl returns null (execute-repo-fetch line 59) ---
+
+  describe("repo URL parse failure", () => {
+    it("throws when parseRepoUrl returns null", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      vi.mocked(parseRepoUrl.parseRepoUrl).mockReturnValue(null);
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Could not parse repository URL");
+    });
+  });
+
+  // --- Repo edge cases: path traversal (execute-repo-fetch line 66) ---
+
+  describe("repo path traversal protection", () => {
+    it("rejects owner '..'", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/../repo",
+      });
+      vi.mocked(parseRepoUrl.parseRepoUrl).mockReturnValue({ owner: "..", repo: "repo" });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/../repo" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid repository owner or name");
+    });
+
+    it("rejects repo '..'", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/..",
+      });
+      vi.mocked(parseRepoUrl.parseRepoUrl).mockReturnValue({ owner: "owner", repo: ".." });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/.." },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid repository owner or name");
+    });
+
+    it("rejects owner '.'", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/./repo",
+      });
+      vi.mocked(parseRepoUrl.parseRepoUrl).mockReturnValue({ owner: ".", repo: "repo" });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/./repo" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid repository owner or name");
+    });
+
+    it("rejects repo '.'", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/.",
+      });
+      vi.mocked(parseRepoUrl.parseRepoUrl).mockReturnValue({ owner: "owner", repo: "." });
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/." },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow("Invalid repository owner or name");
+    });
+  });
+
+  // --- Repo edge cases: symlink protection (execute-repo-fetch line 85) ---
+
+  describe("repo symlink protection", () => {
+    it("rejects symlink at target path", async () => {
+      const tool = createTool();
+      vi.mocked(detectRepoUrl.isRepoUrl).mockReturnValue({
+        isRepo: true,
+        scheme: "https",
+        sanitizedUrl: "https://github.com/owner/repo",
+      });
+      vi.mocked(parseRepoUrl.parseRepoUrl).mockReturnValue({ owner: "owner", repo: "repo" });
+
+      // Mock lstat to return a symlink
+      const mockLstat = {
+        isSymbolicLink: () => true,
+      };
+      vi.mocked(fs.lstat).mockResolvedValue(mockLstat as never);
+
+      await expect(
+        tool.execute(
+          "call-1",
+          { url: "https://github.com/owner/repo" },
+          undefined,
+          undefined,
+          createContext(),
+        ),
+      ).rejects.toThrow(/symbolic link/);
     });
   });
 });

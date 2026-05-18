@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { runSubagent } from "./subagent.js";
 
-export interface SummarizeOptions {
+interface SummarizeOptions {
   /** The text content to summarize */
   content: string;
   /** User's instruction for summarization */
@@ -24,7 +24,10 @@ export interface SummarizeOptions {
   /** AbortSignal for cancellation */
   signal?: AbortSignal;
   /** Streaming updates callback */
-  onUpdate?: (update: { content: Array<{ type: string; text: string }>; details: { status: string } }) => void;
+  onUpdate?: (update: {
+    content: Array<{ type: string; text: string }>;
+    details: { status: string };
+  }) => void;
 }
 
 export async function summarizeWithSubagent(options: SummarizeOptions): Promise<{

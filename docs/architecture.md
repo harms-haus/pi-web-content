@@ -9,11 +9,15 @@ pi-web-content is a [pi](https://github.com/earendil-works/pi) extension that re
 | Module | File | Responsibility | Key Exports | Internal Dependencies |
 |--------|------|----------------|-------------|----------------------|
 | **Entry point** | `src/index.ts` | Extension registration with pi host | `default` (extension factory) | `fetch-content.ts` |
-| **fetch_content tool** | `src/fetch-content.ts` | Unified tool definition: URL validation, routing, web fetch, git clone, truncation | `createFetchContentTool(pi)` | All modules except `turndown-plugin-gfm.d.ts` |
+| **fetch_content tool** | `src/fetch-content.ts` | Thin orchestrator: tool definition, URL scheme validation, repo detection, routing to `execute-repo-fetch` or `execute-web-fetch`, TUI renderers | `createFetchContentTool(pi)` | `detect-repo-url.ts`, `execute-repo-fetch.ts`, `execute-web-fetch.ts`, `tool-renderers.ts` |
+| **Web fetch executor** | `src/execute-web-fetch.ts` | Full web fetch pipeline: SSRF validation, HTTP fetch with manual redirects, binary rejection, body read with size limit, content-type routing, HTML→Markdown conversion, summarization, truncation | `executeWebFetch(params, signal, onUpdate, ctx)` | `fetch-constants.ts`, `ssrf.ts`, `html-to-markdown.ts`, `summarize.ts`, `execute-repo-fetch.ts` _(type import)_ |
+| **Repo fetch executor** | `src/execute-repo-fetch.ts` | Git clone pipeline: SSRF validation (HTTPS + SSH), URL sanitization, owner/repo parsing, branch validation, git clone with timeout, summarization | `executeRepoFetch(pi, params, repoResult, signal, onUpdate, ctx)`, `FetchContentDetails` | `fetch-constants.ts`, `sanitize-git-url.ts`, `ssrf.ts`, `parse-repo-url.ts`, `summarize.ts` |
+| **Fetch constants** | `src/fetch-constants.ts` | All timeout, size limit, and HTTP header constants | `FETCH_TIMEOUT_MS`, `GIT_CLONE_TIMEOUT_MS`, `MAX_RESPONSE_BYTES`, `MAX_REDIRECTS`, `USER_AGENT`, `ACCEPT_HEADER`, `ACCEPT_LANGUAGE` | — |
+| **Git URL sanitizer** | `src/sanitize-git-url.ts` | Git URL sanitization against command injection: length, whitespace, protocol injection, shell metacharacters, character allowlist, credential stripping | `sanitizeGitUrl(url)` | — |
 | **URL detector** | `src/detect-repo-url.ts` | Classifies a URL as git repo vs. web page via hostname/path heuristics | `isRepoUrl(url)`, `RepoUrlResult`, `stripCredentials(url)` _(internal, not exported)_ | — |
 | **URL parser** | `src/parse-repo-url.ts` | Extracts `owner`/`repo` from SSH, HTTPS, and generic git URLs | `parseRepoUrl(url)`, `RepoInfo` | — |
 | **SSRF guard** | `src/ssrf.ts` | Validates URLs against SSRF: static hostname blocklist, DNS resolution, IP range checks, redirect validation | `validateUrlForSsrf(url)`, `validateRedirectForSsrf(from, to)`, `isBlockedHostname(hostname)`, `isBlockedByDns(hostname)` | — |
-| **HTML→Markdown** | `src/html-to-markdown.ts` | Strips boilerplate via Readability, converts HTML to Markdown via Turndown + GFM | `htmlToMarkdown(html, url)`, `BINARY_TYPES`, `HtmlToMarkdownResult` | — |
+| **HTML→Markdown** | `src/html-to-markdown.ts` | Strips boilerplate via Readability (lazy-loaded), converts HTML to Markdown via Turndown + GFM | `htmlToMarkdown(html, url)` _(async)_, `BINARY_TYPES`, `HtmlToMarkdownResult` | — |
 | **Summarizer** | `src/summarize.ts` | Constructs subagent prompt with UUID-bounded content delimiter, delegates to subagent | `summarizeWithSubagent(options)`, `SummarizeOptions` | `subagent.ts` |
 | **Subagent runner** | `src/subagent.ts` | Spawns pi as a subprocess in `--mode json`, parses NDJSON stdout, handles abort (SIGTERM→SIGKILL) | `runSubagent(task, cwd, signal)`, `SubagentResult` | — |
 | **TUI renderers** | `src/tool-renderers.ts` | Shared call/result text rendering for the pi TUI | `renderToolCall(toolName, args, theme)`, `renderToolResult(result, details, {isPartial}, theme, options?)` | — |
@@ -57,26 +61,21 @@ These sets allow the detector to distinguish between `github.com/owner/repo` (cl
 
 ## Data Flow — Web Fetch
 
-1. **Tool invocation** — `index.ts` registers the tool via `createFetchContentTool(pi)`. The pi host calls `execute(toolCallId, params, signal, onUpdate, ctx)`.
+Executed in `execute-web-fetch.ts`. Triggered when `isRepoUrl(url)` returns `isRepo: false`.
 
-2. **Scheme validation** — The URL must match `^https?://` or `^git@`. Anything else throws.
+1. **Tool invocation** — `index.ts` registers the tool via `createFetchContentTool(pi)`. The pi host calls `execute(toolCallId, params, signal, onUpdate, ctx)`. After scheme validation and repo detection in `fetch-content.ts`, control is delegated to `executeWebFetch()`.
 
-3. **Repo detection** — `isRepoUrl(url)` ([detect-repo-url.ts](../src/detect-repo-url.ts)) applies priority-ordered rules:
-   - `git@` prefix → SSH repo
-   - `.git` in path → repo
-   - Known git host + repo-like path → repo
-   - Known git host + non-repo path → web
-   - Unknown host → web (default)
-   
-   If `isRepo: true`, routing jumps to the [Git Clone flow](#data-flow--git-clone).
+2. **SSRF validation** — `validateUrlForSsrf(url)` ([ssrf.ts](../src/ssrf.ts)) checks scheme, static hostname blocklist, and DNS-resolved IPs. Throws `Blocked: …` on failure. See [docs/security.md](./security.md) for the full threat model.
 
-4. **SSRF validation** — `validateUrlForSsrf(url)` ([ssrf.ts](../src/ssrf.ts)) checks scheme, static hostname blocklist, and DNS-resolved IPs. Throws `Blocked: …` on failure. See [docs/security.md](./security.md) for the full threat model.
+3. **Streaming: fetching** — An `onUpdate` callback fires `{ status: "fetching" }`.
 
-5. **Streaming: fetching** — An `onUpdate` callback fires `{ status: "fetching" }`.
+4. **HTTP fetch with manual redirects** — A loop (max 10 redirects) issues `fetch()` with `redirect: "manual"`. Each redirect's `Location` header is validated via `validateRedirectForSsrf()` to prevent SSRF-to-internal on redirect. A 30-second `AbortSignal.timeout` is combined with the caller's signal via `AbortSignal.any()`. Redirect response bodies are explicitly cancelled via `response.body?.cancel()` to free the connection before following the next redirect.
 
-6. **HTTP fetch with manual redirects** — A loop (max 10 redirects) issues `fetch()` with `redirect: "manual"`. Each redirect's `Location` header is validated via `validateRedirectForSsrf()` to prevent SSRF-to-internal on redirect. A 30-second `AbortSignal.timeout` is combined with the caller's signal via `AbortSignal.any()`.
+5. **Response validation** — Non-OK status throws `HTTP {status} {statusText}`.
 
-7. **Response validation** — Non-OK status throws `HTTP {status} {statusText}`. The body is read via `readResponseWithSizeLimit()` — a streaming reader that aborts if the total exceeds `MAX_RESPONSE_BYTES` (10 MB), regardless of `Content-Length`.
+6. **Binary rejection (before body read)** — The `Content-Type` header is checked against `BINARY_TYPES` **before** the response body is read. If a binary type is detected, an error is thrown immediately — no binary payload is ever buffered into memory. This avoids wasting bandwidth and memory on unsupported content.
+
+7. **Body read with streaming size limit** — The body is read via `readResponseWithSizeLimit()` — a streaming reader that aborts if the total exceeds `MAX_RESPONSE_BYTES` (10 MB), regardless of `Content-Length`.
 
 8. **Content-type routing**:
 
@@ -85,12 +84,9 @@ These sets allow the detector to distinguish between `github.com/owner/repo` (cl
    | `application/json` | Wrapped in `# JSON Response` heading + fenced `json` code block. Title: `"JSON Response"`. |
    | `text/plain`, `text/csv` | Wrapped in `# Content from {url}` heading + fenced code block. Title: `"Text Response"`. |
    | `text/html`, `application/xhtml+xml` | Passed to `htmlToMarkdown()` ([html-to-markdown.ts](../src/html-to-markdown.ts)). Streaming update: `"converting"`. |
-   | Binary types (`image/*`, `video/*`, `audio/*`, `application/pdf`, `application/zip`, etc.) | **Rejected** with `Unsupported content type` error. See `BINARY_TYPES` constant. |
    | Other | Returned as-is with `# Content from {url}` heading. |
 
-   Binary content rejection is a separate check after the size-limited read — it ensures no binary payload is processed further.
-
-9. **HTML→Markdown conversion** (HTML path only) — `htmlToMarkdown()` creates a `JSDOM` instance, runs Mozilla Readability to extract the article body, falls back to `<body>` if Readability fails, then converts to Markdown via a singleton TurndownService with GFM plugin. The JSDOM window is closed afterward.
+9. **HTML→Markdown conversion** (HTML path only) — `htmlToMarkdown()` is `async` — it dynamically imports `jsdom` and `@mozilla/readability` on each call (lazy-loaded to avoid paying the cost when only fetching non-HTML content). It creates a `JSDOM` instance, runs Mozilla Readability to extract the article body, falls back to `<body>` if Readability fails, then converts to Markdown via a singleton TurndownService with GFM plugin. The JSDOM window is closed afterward.
 
 10. **Optional summarization** — If `params.summarize` is set, the markdown is passed to `summarizeWithSubagent()`. See [Data Flow — Summarization](#data-flow--summarization).
 
@@ -100,7 +96,7 @@ These sets allow the detector to distinguish between `github.com/owner/repo` (cl
 
 ### FetchContentDetails Interface
 
-The `details` object attached to every tool result:
+Defined in `execute-repo-fetch.ts` (re-exported for use by `fetch-content.ts`). The `details` object attached to every tool result:
 
 ```ts
 interface FetchContentDetails {
@@ -123,11 +119,13 @@ interface FetchContentDetails {
 
 ## Data Flow — Git Clone
 
-Triggered when `isRepoUrl(url)` returns `isRepo: true`.
+Executed in `execute-repo-fetch.ts`. Triggered when `isRepoUrl(url)` returns `isRepo: true`.
 
-1. **SSRF validation** (HTTPS only) — If `repoResult.scheme === "https"` and `repoResult.sanitizedUrl` exists, `validateUrlForSsrf()` is called. SSH URLs (`git@…`) skip this check because they cannot be fetched via HTTP.
+1. **SSRF validation** — Both HTTPS and SSH URLs are validated:
+   - **HTTPS** (`repoResult.scheme === "https"` and `sanitizedUrl` exists): `validateUrlForSsrf()` is called for full URL validation.
+   - **SSH** (`repoResult.scheme === "ssh"`): The hostname is extracted from the `git@hostname:owner/repo` pattern and checked against the hostname blocklist (`isBlockedHostname`) and DNS resolution blocklist (`isBlockedByDns`). SSH URLs are not validated via `validateUrlForSsrf()` because they cannot be fetched via HTTP.
 
-2. **URL sanitization** — `sanitizeGitUrl()` applies defense-in-depth checks:
+2. **URL sanitization** — `sanitizeGitUrl()` ([sanitize-git-url.ts](../src/sanitize-git-url.ts)) applies defense-in-depth checks:
    - Rejects empty or >2048 char URLs
    - Rejects whitespace
    - Rejects `ext::` protocol injection
@@ -140,17 +138,25 @@ Triggered when `isRepoUrl(url)` returns `isRepo: true`.
 
 4. **Path traversal check** — Explicitly rejects `owner` or `repo` values of `".."` or `"."`.
 
-5. **Target path construction** — `/tmp/repository-{owner}/{repo}`. Cloned repos persist intentionally for subsequent agent access.
+5. **Branch validation** — If `params.branch` is provided, it is validated against git naming rules before being passed to `git clone`:
+   - Max 256 characters
+   - Only alphanumeric, `/`, `.`, `_`, `-`
+   - No `..`, `~`, `^`, or `:` characters
+   - Cannot end with `.lock`, `/`, or `.`
+   
+   Invalid branch names throw an error with a descriptive message.
 
-6. **Symlink check** — `fs.lstat(targetPath)` verifies the target is not a symbolic link before proceeding (TOCTOU mitigation).
+6. **Target path construction** — `/tmp/repository-{owner}/{repo}`. Cloned repos persist intentionally for subsequent agent access.
 
-7. **Directory preparation** — Existing directory is removed via `fs.rm({ recursive: true, force: true })`. Parent directory is created.
+7. **Symlink check** — `fs.lstat(targetPath)` verifies the target is not a symbolic link before proceeding (TOCTOU mitigation).
 
-8. **Git clone** — Executes `git clone --depth 1 --single-branch [--branch {branch}] -- {sanitizedUrl} {targetPath}` with a 120-second timeout. If the clone fails, the partial directory is cleaned up and the stderr is thrown.
+8. **Directory preparation** — Existing directory is removed via `fs.rm({ recursive: true, force: true })`. Parent directory is created.
 
-9. **Optional summarization** — If `params.summarize` is set, `summarizeWithSubagent()` is called with `cwd: targetPath` so the subagent can explore the repo filesystem. See [Data Flow — Summarization](#data-flow--summarization).
+9. **Git clone** — Executes `git clone --depth 1 --single-branch [--branch {branch}] -- {sanitizedUrl} {targetPath}` with a 120-second timeout (`GIT_CLONE_TIMEOUT_MS`). If the clone fails, the partial directory is cleaned up and a sanitized error is thrown — stderr from git is **not** included in the error message to avoid leaking repository metadata or internal paths.
 
-10. **Return** — Without summarization, returns the clone path, owner, repo, and URL as structured text. With summarization, returns the subagent's analysis.
+10. **Optional summarization** — If `params.summarize` is set, `summarizeWithSubagent()` is called with `cwd: targetPath` so the subagent can explore the repo filesystem. See [Data Flow — Summarization](#data-flow--summarization).
+
+11. **Return** — Without summarization, returns the clone path, owner, repo, and URL as structured text. With summarization, returns the subagent's analysis.
 
 ## Data Flow — Summarization
 
@@ -204,29 +210,51 @@ Used by both the web fetch and git clone paths when `params.summarize` is provid
 
 ```
 index.ts
-└── fetch-content.ts
-    ├── detect-repo-url.ts      (URL → repo vs web classification)
-    ├── parse-repo-url.ts       (URL → { owner, repo })
-    ├── ssrf.ts                 (URL validation against SSRF)
-    ├── html-to-markdown.ts     (HTML → Markdown via Readability + Turndown)
-    │   └── turndown-plugin-gfm (GFM markdown extensions)
-    ├── summarize.ts            (Prompt construction + subagent delegation)
-    │   └── subagent.ts         (Subprocess spawn + NDJSON parsing)
-    └── tool-renderers.ts       (TUI call/result text rendering)
+└── fetch-content.ts              (thin orchestrator + TUI renderers)
+    ├── detect-repo-url.ts        (URL → repo vs web classification)
+    ├── execute-repo-fetch.ts     (git clone pipeline + FetchContentDetails)
+    │   ├── fetch-constants.ts    (GIT_CLONE_TIMEOUT_MS)
+    │   ├── sanitize-git-url.ts   (URL sanitization)
+    │   ├── parse-repo-url.ts     (URL → { owner, repo })
+    │   ├── ssrf.ts               (hostname blocklist + DNS checks)
+    │   └── summarize.ts          (subagent delegation)
+    │       └── subagent.ts       (subprocess spawn + NDJSON parsing)
+    ├── execute-web-fetch.ts      (web fetch pipeline)
+    │   ├── fetch-constants.ts    (timeouts, size limits, headers)
+    │   ├── ssrf.ts               (URL + redirect SSRF validation)
+    │   ├── html-to-markdown.ts   (HTML → Markdown, dynamic imports for JSDOM/Readability)
+    │   │   └── turndown-plugin-gfm (GFM markdown extensions)
+    │   └── summarize.ts          (subagent delegation)
+    │       └── subagent.ts       (subprocess spawn + NDJSON parsing)
+    └── tool-renderers.ts         (TUI call/result text rendering)
 ```
 
 **External runtime imports** (not shown above):
 
 ```
-html-to-markdown.ts
-├── @mozilla/readability        (Readability)
-├── jsdom                       (JSDOM)
-├── turndown                    (TurndownService)
-└── turndown-plugin-gfm         (gfm plugin)
-
-fetch-content.ts
+execute-web-fetch.ts
 └── @earendil-works/pi-coding-agent
     └── (DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead)
+
+execute-repo-fetch.ts
+└── @earendil-works/pi-coding-agent
+    └── (AgentToolUpdateCallback, ExtensionAPI, ExtensionContext types)
+
+html-to-markdown.ts               (static imports)
+├── turndown                       (TurndownService)
+└── turndown-plugin-gfm            (gfm plugin)
+
+html-to-markdown.ts               (dynamic imports — lazy-loaded per call)
+├── @mozilla/readability           (Readability)
+└── jsdom                          (JSDOM)
+
+fetch-content.ts
+├── @earendil-works/pi-coding-agent
+│   └── (AgentToolUpdateCallback, ExtensionAPI, ExtensionContext, Theme)
+├── @earendil-works/pi-tui
+│   └── (Text)
+└── typebox
+    └── (Type)
 ```
 
 ## External Dependencies
@@ -235,8 +263,8 @@ fetch-content.ts
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `@mozilla/readability` | `^0.6.0` | Extracts article content from HTML, stripping navigation/ads/sidebars |
-| `jsdom` | `^26.0.0` | DOM parsing environment for Readability |
+| `@mozilla/readability` | `^0.6.0` | Extracts article content from HTML, stripping navigation/ads/sidebars (dynamically imported) |
+| `jsdom` | `^26.0.0` | DOM parsing environment for Readability (dynamically imported) |
 | `turndown` | `^7.2.0` | Converts HTML DOM to Markdown |
 | `turndown-plugin-gfm` | `^1.0.2` | GitHub Flavored Markdown support (tables, strikethrough) |
 
@@ -263,7 +291,8 @@ The Mistral SDK is replaced with an empty package to avoid pulling in its transi
 pi-web-content/
 ├── .bifrost.yaml
 ├── .gitignore
-├── biome.json
+├── eslint.config.js
+├── .prettierrc
 ├── LICENSE
 ├── package.json
 ├── package-lock.json
@@ -274,24 +303,31 @@ pi-web-content/
 │   └── architecture.md          ← This file
 └── src/
     ├── index.ts                 # Extension entry point
-    ├── fetch-content.ts         # fetch_content tool definition
+    ├── fetch-content.ts         # fetch_content tool: definition + routing orchestrator
+    ├── execute-web-fetch.ts     # Web fetch pipeline (SSRF, HTTP, binary rejection, HTML→MD, truncation)
+    ├── execute-repo-fetch.ts    # Git clone pipeline (SSRF, URL sanitization, branch validation, clone)
+    ├── fetch-constants.ts       # Timeout, size limit, and HTTP header constants
+    ├── sanitize-git-url.ts      # Git URL sanitization against command injection
     ├── detect-repo-url.ts       # Git repo URL detection
     ├── parse-repo-url.ts        # Owner/repo extraction from URLs
     ├── ssrf.ts                  # SSRF validation (hostname + DNS)
-    ├── html-to-markdown.ts      # HTML → Markdown conversion
+    ├── html-to-markdown.ts      # HTML → Markdown conversion (async, JSDOM/Readability lazy-loaded)
     ├── summarize.ts             # Subagent summarization helper
     ├── subagent.ts              # Pi subprocess runner
     ├── tool-renderers.ts        # Shared TUI rendering
     ├── types/
     │   └── turndown-plugin-gfm.d.ts  # Type declarations for gfm plugin
     └── __tests__/
-        ├── fetch-content.test.ts
         ├── detect-repo-url.test.ts
-        ├── parse-repo-url.test.ts
-        ├── ssrf.test.ts
+        ├── fetch-content.test.ts
+        ├── html-to-markdown.edge-cases.test.ts
         ├── html-to-markdown.test.ts
-        ├── summarize.test.ts
+        ├── index.test.ts
+        ├── parse-repo-url.test.ts
+        ├── sanitize-git-url.test.ts
+        ├── ssrf.test.ts
         ├── subagent.test.ts
+        ├── summarize.test.ts
         └── tool-renderers.test.ts
 ```
 

@@ -12,7 +12,7 @@ Thank you for your interest in contributing! This guide covers how to set up the
 3. **Make your changes** with corresponding tests. See [Testing Requirements](#testing-requirements) below.
 4. **Run all checks** before committing:
    ```bash
-   npm run typecheck && npm run check && npm run test
+   npm run typecheck && npm run lint && npm run test
    ```
    All three must pass with no errors.
 5. **Commit** with a clear, descriptive message.
@@ -22,10 +22,10 @@ Thank you for your interest in contributing! This guide covers how to set up the
 
 - **Tests for all new code.** Every new source module must have a corresponding test file. See [Testing Requirements](#testing-requirements).
 - **All tests must pass.** No exceptions — `npm run test` must succeed.
-- **No Biome lint errors.** Run `npm run check`. Warnings are acceptable if justified with a comment, but errors block CI.
-- **TypeScript strict mode.** The project uses `"strict": true` in `tsconfig.json`. Use of `any` requires a `// biome-ignore lint/suspicious/noExplicitAny: <reason>` comment.
+- **No ESLint errors.** Run `npm run lint`. Warnings are acceptable if justified with a comment, but errors block CI.
+- **TypeScript strict mode.** The project uses `"strict": true` in `tsconfig.json`. Use of `any` requires a `// eslint-disable-next-line @typescript-eslint/no-explicit-any -- <reason>` comment.
 - **JSDoc comments on all exported functions.** Every function, interface, and type exported from a module must have a JSDoc block describing its purpose, parameters, and return value.
-- **Formatting.** Use `npm run format` (Biome) to keep code style consistent. The formatter is configured for 2-space indentation, 120-char line width, and double quotes.
+- **Formatting.** Use `npm run format` (Prettier) to keep code style consistent. The formatter is configured for 2-space indentation, 100-char line width, and double quotes.
 
 ## Testing Requirements
 
@@ -87,7 +87,7 @@ describe("myFunction", () => {
 
 - **PR title** should clearly describe the change (e.g., `fix: handle redirect loops in SSRF validation`).
 - **PR description** must reference related issues (e.g., `Fixes #12`).
-- **All CI checks must pass** — typecheck, Biome check, and tests.
+- **All CI checks must pass** — typecheck, ESLint, and tests.
 - **CHANGELOG.md** — add a summary of your changes under the `Unreleased` section. If no `Unreleased` section exists, create one at the top. Use the format:
   ```markdown
   ## Unreleased

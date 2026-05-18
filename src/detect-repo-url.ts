@@ -81,6 +81,7 @@ const REPO_SUBPATHS = new Set(["tree", "blob", "raw", "src", "commits", "blame",
  * 4. Known git host + non-repo path → web
  * 5. Everything else → web (default)
  */
+// eslint-disable-next-line complexity -- multi-branch URL detection with 10+ git host patterns
 export function isRepoUrl(url: string): RepoUrlResult {
   // Rule 1: SSH scheme
   if (url.startsWith("git@")) {
@@ -182,7 +183,7 @@ export function isRepoUrl(url: string): RepoUrlResult {
  * Strip embedded credentials from a URL.
  * e.g., `https://user:pass@github.com/...` → `https://github.com/...`
  */
-function stripCredentials(parsed: URL): string {
+export function stripCredentials(parsed: URL): string {
   if (parsed.username || parsed.password) {
     const url = new URL(parsed.toString());
     url.username = "";

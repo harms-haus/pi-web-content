@@ -28,13 +28,13 @@ All constants below are **hardcoded in source** — they are not user-configurab
 
 | Constant | File | Default Value | Purpose |
 |----------|------|---------------|---------|
-| `FETCH_TIMEOUT_MS` | `src/fetch-content.ts` | `30_000` (30s) | Timeout for HTTP fetch requests |
-| `GIT_CLONE_TIMEOUT_MS` | `src/fetch-content.ts` | `120_000` (2m) | Timeout for `git clone` operations |
-| `MAX_RESPONSE_BYTES` | `src/fetch-content.ts` | `10 * 1024 * 1024` (10 MB) | Maximum allowed response body size (enforced via streaming read) |
-| `MAX_REDIRECTS` | `src/fetch-content.ts` | `10` | Maximum number of HTTP redirects to follow |
-| `USER_AGENT` | `src/fetch-content.ts` | `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36` | User-Agent header for HTTP requests |
-| `ACCEPT_HEADER` | `src/fetch-content.ts` | `text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8` | Accept header for HTTP requests |
-| `ACCEPT_LANGUAGE` | `src/fetch-content.ts` | `en-US,en;q=0.9` | Accept-Language header for HTTP requests |
+| `FETCH_TIMEOUT_MS` | `src/fetch-constants.ts` | `30_000` (30s) | Timeout for HTTP fetch requests |
+| `GIT_CLONE_TIMEOUT_MS` | `src/fetch-constants.ts` | `120_000` (2m) | Timeout for `git clone` operations |
+| `MAX_RESPONSE_BYTES` | `src/fetch-constants.ts` | `10 * 1024 * 1024` (10 MB) | Maximum allowed response body size (enforced via streaming read) |
+| `MAX_REDIRECTS` | `src/fetch-constants.ts` | `10` | Maximum number of HTTP redirects to follow |
+| `USER_AGENT` | `src/fetch-constants.ts` | `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36` | User-Agent header for HTTP requests |
+| `ACCEPT_HEADER` | `src/fetch-constants.ts` | `text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8` | Accept header for HTTP requests |
+| `ACCEPT_LANGUAGE` | `src/fetch-constants.ts` | `en-US,en;q=0.9` | Accept-Language header for HTTP requests |
 | `SIGKILL_DELAY_MS` | `src/subagent.ts` | `5000` (5s) | Delay between SIGTERM and SIGKILL when aborting a subagent |
 | `MAX_STDERR_LENGTH` | `src/subagent.ts` | `64 * 1024` (64 KB) | Maximum stderr buffer length from subagent |
 | `BINARY_TYPES` | `src/html-to-markdown.ts` | Array of 8 MIME type prefixes | Content types rejected as binary (see below) |

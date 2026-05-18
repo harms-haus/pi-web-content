@@ -43,19 +43,18 @@ Validates all TypeScript files under `src/` against `tsconfig.json` without emit
 
 ```bash
 npm run lint       # Reports issues only
-npm run check      # Reports issues + auto-fixable suggestions
 ```
 
-Both run Biome against `src/`. `check` is stricter — it includes formatting violations and suggests auto-fixes.
+Runs ESLint against `src/`. Use `npm run format` (Prettier) to auto-fix formatting.
 
 ### Formatting
 
 ```bash
 npm run format
-# Runs: npx biome format --write src/
+# Runs: prettier --write src/
 ```
 
-Formats all source files in-place according to `biome.json` rules (2-space indent, double quotes, always semicolons, 120-char line width).
+Formats all source files in-place using Prettier (2-space indent, double quotes, always semicolons, 100-char line width).
 
 ### Testing
 
@@ -66,13 +65,29 @@ npm run test
 
 Executes all `src/**/*.test.ts` files with Vitest. No watcher mode is configured — tests run once and exit.
 
+### Coverage
+
+```bash
+npm run test:coverage
+# Runs: vitest run --coverage
+```
+
+Generates a coverage report using the v8 provider. The project enforces **90% thresholds** on statements, branches, functions, and lines. Coverage includes all `src/**/*.ts` files but excludes test files and `src/types/**`. Reports are output in `text` (terminal) and `lcov` formats.
+
 ### Running All Checks
 
 ```bash
-npm run typecheck && npm run check && npm run test
+npm run typecheck && npm run lint && npm run test
 ```
 
 Run this before committing to ensure type safety, lint compliance, and test correctness.
+
+## CI
+
+The project uses two GitHub Actions workflows:
+
+- **`.github/workflows/ci.yml`** — Runs on every push and PR to `main`. Uses a Node.js 20 + 22 matrix and executes type checking, linting, format checking, and tests.
+- **`.github/workflows/publish.yml`** — Runs on tag pushes (`v*`). Executes `npm publish --dry-run` to validate that the package can be published without actually publishing it.
 
 ## Project Configuration
 
@@ -116,72 +131,33 @@ export default defineConfig({
   test: {
     globals: true,
     include: ['src/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      thresholds: {
+        statements: 90,
+        branches: 90,
+        functions: 90,
+        lines: 90,
+      },
+      include: ['src/**/*.ts'],
+      exclude: ['src/**/*.test.ts', 'src/types/**'],
+    },
   },
 });
 ```
 
 - **`globals: true`** — Vitest globals (`describe`, `it`, `expect`, `vi`, `beforeEach`, etc.) are available without explicit imports (though many tests import them explicitly for clarity).
 - **`include`** — Matches `src/**/*.test.ts`, enforcing a 1:1 source-to-test mapping convention.
+- **`coverage`** — Uses the v8 provider, reports to terminal (`text`) and LCOV (`lcov`). Enforces 90% thresholds on statements, branches, functions, and lines. Test files and `src/types/**` are excluded from coverage.
 
-### biome.json
+### eslint.config.js
 
-```json
-{
-  "$schema": "https://biomejs.dev/schemas/2.4.4/schema.json",
-  "assist": { "actions": { "source": { "organizeImports": "on" } } },
-  "formatter": {
-    "enabled": true,
-    "indentStyle": "space",
-    "indentWidth": 2,
-    "lineWidth": 120
-  },
-  "javascript": {
-    "formatter": {
-      "quoteStyle": "double",
-      "semicolons": "always"
-    }
-  },
-  "linter": {
-    "enabled": true,
-    "rules": {
-      "recommended": true,
-      "complexity": {
-        "noForEach": "warn",
-        "useSimplifiedLogicExpression": "warn"
-      },
-      "style": {
-        "useTemplate": "error",
-        "noParameterAssign": "off",
-        "useConst": "error"
-      },
-      "suspicious": {
-        "noExplicitAny": "warn"
-      }
-    }
-  },
-  "overrides": [
-    {
-      "includes": ["src/index.ts"],
-      "linter": {
-        "rules": {
-          "suspicious": { "noControlCharactersInRegex": "off" }
-        }
-      }
-    }
-  ]
-}
-```
+The project uses ESLint 9 with typescript-eslint (strictTypeChecked) and eslint-config-prettier. The configuration matches the pi-workflows pattern.
 
-| Rule | Level | Description |
-|------|-------|-------------|
-| `complexity.noForEach` | warn | Prefer `for...of` loops over `.forEach()` (performance, early-exit) |
-| `complexity.useSimplifiedLogicExpression` | warn | Prefer `a ?? b` over `a || b` for nullish coalescing |
-| `style.useTemplate` | error | Require template literals over string concatenation |
-| `style.noParameterAssign` | off | Allows reassigning function parameters |
-| `style.useConst` | error | Require `const` when a variable is never reassigned |
-| `suspicious.noExplicitAny` | warn | Discourages `any` type — prefer specific types or `unknown` |
+### .prettierrc
 
-Two separate mechanisms handle lint warnings in `src/index.ts`. The `overrides` section disables `noControlCharactersInRegex` for that file due to regex-related patterns in the source. The `noExplicitAny` warning on the `registerTool` type cast (`as any`) is suppressed via an inline `// biome-ignore lint/suspicious/noExplicitAny` comment directly in the code, not by the biome.json override.
+The project uses Prettier with 100-char line width, 2-space indentation, double quotes, trailing commas, and semicolons.
 
 ## Test Patterns
 
@@ -195,10 +171,15 @@ Each source module has a corresponding test file under `src/__tests__/`:
 | `detect-repo-url.ts` | `detect-repo-url.test.ts` |
 | `ssrf.ts` | `ssrf.test.ts` |
 | `subagent.ts` | `subagent.test.ts` |
-| `html-to-markdown.ts` | `html-to-markdown.test.ts` |
+| `html-to-markdown.ts` | `html-to-markdown.test.ts` + `html-to-markdown.edge-cases.test.ts` |
 | `summarize.ts` | `summarize.test.ts` |
 | `parse-repo-url.ts` | `parse-repo-url.test.ts` |
 | `tool-renderers.ts` | `tool-renderers.test.ts` |
+| `fetch-constants.ts` | — (tested via integration in `fetch-content.test.ts`) |
+| `sanitize-git-url.ts` | `sanitize-git-url.test.ts` |
+| `execute-repo-fetch.ts` | — (tested via `fetch-content.test.ts`) |
+| `execute-web-fetch.ts` | — (tested via `fetch-content.test.ts`) |
+| `index.ts` | `index.test.ts` |
 
 ### Mock Ordering
 
@@ -392,7 +373,7 @@ To add support for a new git hosting platform (e.g., `gogs.example.com`):
 
 4. **Verify `parseRepoUrl()` handles the URL format** — The existing regex patterns in `parse-repo-url.ts` handle generic `https://host/owner/repo` URLs, so no changes are needed for standard paths. Test with a `parse-repo-url.test.ts` entry if the URL format is unusual.
 
-5. **Run all checks**: `npm run typecheck && npm run check && npm run test`
+5. **Run all checks**: `npm run typecheck && npm run lint && npm run test`
 
 ## Code Style Conventions
 
@@ -401,7 +382,7 @@ To add support for a new git hosting platform (e.g., `gogs.example.com`):
 | **Indentation** | 2 spaces | `function foo() {\n  return bar;\n}` |
 | **Quotes** | Double quotes | `const x = "hello";` |
 | **Semicolons** | Always required | `const x = 5;` |
-| **Line width** | 120 characters | Wrap long lines before 120 chars |
+| **Line width** | 100 characters | Wrap long lines before 100 chars |
 | **Template literals** | Required over concatenation | `` `Hello ${name}` `` not `'Hello ' + name` |
 | **`const` over `let`** | Enforced | Use `const` unless reassignment is needed |
 | **`for...of` over `.forEach()`** | Preferred | `for (const item of items)` not `items.forEach(...)` |
@@ -423,9 +404,9 @@ export default function (pi: ExtensionAPI) {
 
 All other modules use named exports only.
 
-### Biome Ignore Comments
+### ESLint Disable Comments
 
-Use `// biome-ignore <rule>: <reason>` comments sparingly and only when a rule cannot be satisfied correctly. See `src/index.ts` for an example (type cast on `registerTool`).
+Use `// eslint-disable-next-line <rule> -- <reason>` comments sparingly and only when a rule cannot be satisfied correctly. See `src/index.ts` for an example (type cast on `registerTool`).
 
 ---
 

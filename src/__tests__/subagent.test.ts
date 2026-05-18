@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message, StopReason, Usage } from "@earendil-works/pi-ai";
+import type { ChildProcess } from "node:child_process";
 
 // --- Mocks ---
 
@@ -22,14 +23,14 @@ import { runSubagent } from "../subagent.js";
 function createMockProcess() {
   const stdout = new EventEmitter();
   const stderr = new EventEmitter();
-  const proc = new EventEmitter() as ReturnType<typeof import("node:child_process").spawn>;
+  const proc = new EventEmitter() as ChildProcess;
 
   Object.defineProperty(proc, "stdout", { value: stdout, writable: true });
   Object.defineProperty(proc, "stderr", { value: stderr, writable: true });
   Object.defineProperty(proc, "killed", { value: false, writable: true });
   Object.defineProperty(proc, "kill", { value: vi.fn(), writable: true });
 
-  return proc as unknown as ReturnType<typeof import("node:child_process").spawn> & {
+  return proc as unknown as ChildProcess & {
     stdout: EventEmitter;
     stderr: EventEmitter;
     kill: ReturnType<typeof vi.fn>;
@@ -41,10 +42,15 @@ function createAssistantMessage(text: string): Message {
     role: "assistant",
     content: [{ type: "text", text }],
     api: "openai" as string,
-    provider: "openai" as string,
+    provider: "openai",
     model: "gpt-4",
-    usage: { inputTokens: 10, outputTokens: 10, cacheCreationTokens: 0, cacheReadTokens: 0 } as unknown as import("@earendil-works/pi-ai").Usage,
-    stopReason: "end_turn" as unknown as import("@earendil-works/pi-ai").StopReason,
+    usage: {
+      inputTokens: 10,
+      outputTokens: 10,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    } as unknown as Usage,
+    stopReason: "end_turn" as unknown as StopReason,
     timestamp: Date.now(),
   };
 }
@@ -67,7 +73,10 @@ describe("subagent", () => {
       // Simulate stdout with a message_end event
       const message = createAssistantMessage("Hello from subagent");
 
-      proc.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "message_end", message })}\n`));
+      proc.stdout.emit(
+        "data",
+        Buffer.from(`${JSON.stringify({ type: "message_end", message })}\n`),
+      );
       proc.emit("close", 0);
 
       const result = await resultPromise;
@@ -86,8 +95,14 @@ describe("subagent", () => {
       const msg1 = createAssistantMessage("First message");
       const msg2 = createAssistantMessage("Second message");
 
-      proc.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "message_end", message: msg1 })}\n`));
-      proc.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "message_end", message: msg2 })}\n`));
+      proc.stdout.emit(
+        "data",
+        Buffer.from(`${JSON.stringify({ type: "message_end", message: msg1 })}\n`),
+      );
+      proc.stdout.emit(
+        "data",
+        Buffer.from(`${JSON.stringify({ type: "message_end", message: msg2 })}\n`),
+      );
       proc.emit("close", 0);
 
       const result = await resultPromise;
@@ -111,8 +126,14 @@ describe("subagent", () => {
 
       const assistantMsg = createAssistantMessage("Done");
 
-      proc.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "tool_result_end", message: toolResult })}\n`));
-      proc.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "message_end", message: assistantMsg })}\n`));
+      proc.stdout.emit(
+        "data",
+        Buffer.from(`${JSON.stringify({ type: "tool_result_end", message: toolResult })}\n`),
+      );
+      proc.stdout.emit(
+        "data",
+        Buffer.from(`${JSON.stringify({ type: "message_end", message: assistantMsg })}\n`),
+      );
       proc.emit("close", 0);
 
       const result = await resultPromise;
@@ -167,7 +188,10 @@ describe("subagent", () => {
 
       proc.stdout.emit("data", Buffer.from(`not valid json\n`));
       proc.stdout.emit("data", Buffer.from("{incomplete\n"));
-      proc.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "message_end", message })}\n`));
+      proc.stdout.emit(
+        "data",
+        Buffer.from(`${JSON.stringify({ type: "message_end", message })}\n`),
+      );
       proc.emit("close", 0);
 
       const result = await resultPromise;
@@ -183,8 +207,14 @@ describe("subagent", () => {
 
       const message = createAssistantMessage("Final output");
 
-      proc.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "unknown_event", data: "stuff" })}\n`));
-      proc.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "message_end", message })}\n`));
+      proc.stdout.emit(
+        "data",
+        Buffer.from(`${JSON.stringify({ type: "unknown_event", data: "stuff" })}\n`),
+      );
+      proc.stdout.emit(
+        "data",
+        Buffer.from(`${JSON.stringify({ type: "message_end", message })}\n`),
+      );
       proc.emit("close", 0);
 
       const result = await resultPromise;
@@ -203,7 +233,13 @@ describe("subagent", () => {
 
       expect(mockSpawn).toHaveBeenCalledWith(
         expect.any(String),
-        expect.arrayContaining(["--mode", "json", "-p", "--no-session", expect.stringContaining("test task")]),
+        expect.arrayContaining([
+          "--mode",
+          "json",
+          "-p",
+          "--no-session",
+          expect.stringContaining("test task"),
+        ]),
         { cwd: "/tmp", shell: false, stdio: ["ignore", "pipe", "pipe"] },
       );
     });
@@ -244,6 +280,39 @@ describe("subagent", () => {
       expect(result.error).toContain("Subagent process error");
     });
 
+    it("handles error event with stderr truncation", async () => {
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc);
+
+      const resultPromise = runSubagent("test task", "/tmp");
+
+      // First, fill stderr past the limit
+      proc.stderr.emit("data", Buffer.from("x".repeat(70000)));
+      // Then emit an error — the error handler should skip adding to stderr since it's truncated
+      proc.emit("error", new Error("spawn ENOENT"));
+
+      const result = await resultPromise;
+
+      expect(result.stderr).toContain("[stderr truncated]");
+    });
+
+    it("handles error event that causes stderr truncation", async () => {
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc);
+
+      const resultPromise = runSubagent("test task", "/tmp");
+
+      // Fill stderr close to the limit
+      proc.stderr.emit("data", Buffer.from("x".repeat(65000)));
+      // Error message pushes it over the limit
+      proc.emit("error", new Error("some error"));
+
+      const result = await resultPromise;
+
+      // The error message in stderr should be present (possibly truncated)
+      expect(result.exitCode).toBe(1);
+    });
+
     it("returns text even on non-zero exit code if output exists", async () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
@@ -252,7 +321,10 @@ describe("subagent", () => {
 
       const message = createAssistantMessage("Partial output");
 
-      proc.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "message_end", message })}\n`));
+      proc.stdout.emit(
+        "data",
+        Buffer.from(`${JSON.stringify({ type: "message_end", message })}\n`),
+      );
       proc.emit("close", 1);
 
       const result = await resultPromise;
@@ -360,6 +432,40 @@ describe("subagent", () => {
 
       expect(result.stderr).toBe("chunk1 chunk2 chunk3\n");
     });
+
+    it("truncates stderr when it exceeds MAX_STDERR_LENGTH", async () => {
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc);
+
+      const resultPromise = runSubagent("test task", "/tmp");
+
+      // MAX_STDERR_LENGTH = 64 * 1024 = 65536
+      // Send a chunk that exceeds the limit
+      proc.stderr.emit("data", Buffer.from("x".repeat(70000)));
+      proc.emit("close", 0);
+
+      const result = await resultPromise;
+
+      expect(result.stderr).toContain("[stderr truncated]");
+    });
+
+    it("stops capturing stderr after truncation", async () => {
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc);
+
+      const resultPromise = runSubagent("test task", "/tmp");
+
+      // First chunk triggers truncation
+      proc.stderr.emit("data", Buffer.from("x".repeat(70000)));
+      // This chunk should be ignored because stderrTruncated is true
+      proc.stderr.emit("data", Buffer.from("SHOULD_NOT_APPEAR"));
+      proc.emit("close", 0);
+
+      const result = await resultPromise;
+
+      expect(result.stderr).toContain("[stderr truncated]");
+      expect(result.stderr).not.toContain("SHOULD_NOT_APPEAR");
+    });
   });
 
   // --- getPiInvocation logic (indirectly tested via spawn args) ---
@@ -377,6 +483,103 @@ describe("subagent", () => {
       const callArgs = mockSpawn.mock.calls[0][1] as string[];
       const lastArg = callArgs[callArgs.length - 1];
       expect(lastArg).toContain("my specific task");
+    });
+
+    it("uses execPath directly when basename is not a generic runtime (e.g. 'pi')", async () => {
+      const originalExecPath = process.execPath;
+      const originalArgv1 = process.argv[1];
+      Object.defineProperty(process, "execPath", {
+        value: "/usr/local/bin/pi",
+        configurable: true,
+      });
+      // Ensure argv[1] is falsy so branch 1 is skipped
+      Object.defineProperty(process, "argv", { value: ["node"], configurable: true });
+
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc);
+
+      const resultPromise = runSubagent("test task", "/tmp");
+      proc.emit("close", 0);
+      await resultPromise;
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "/usr/local/bin/pi",
+        expect.arrayContaining(["--mode", "json", "-p", "--no-session"]),
+        expect.any(Object),
+      );
+
+      Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
+      Object.defineProperty(process, "argv", {
+        value: [process.execPath, originalArgv1],
+        configurable: true,
+      });
+    });
+
+    it("uses execPath with script when execPath is 'node' and script exists", async () => {
+      const originalExecPath = process.execPath;
+      const originalArgv = process.argv;
+      const scriptPath = "/path/to/pi-script.js";
+      Object.defineProperty(process, "execPath", {
+        value: "/usr/local/bin/node",
+        configurable: true,
+      });
+      Object.defineProperty(process, "argv", {
+        value: ["/usr/local/bin/node", scriptPath],
+        configurable: true,
+      });
+      const { existsSync } = await import("node:fs");
+      vi.mocked(existsSync).mockReturnValue(true);
+
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc);
+
+      const resultPromise = runSubagent("test task", "/tmp");
+      proc.emit("close", 0);
+      await resultPromise;
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "/usr/local/bin/node",
+        expect.arrayContaining([scriptPath, "--mode", "json", "-p", "--no-session"]),
+        expect.any(Object),
+      );
+      // Script should be the first arg
+      const callArgs = mockSpawn.mock.calls[0][1] as string[];
+      expect(callArgs[0]).toBe(scriptPath);
+
+      Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
+      Object.defineProperty(process, "argv", { value: originalArgv, configurable: true });
+      vi.mocked(existsSync).mockReturnValue(false);
+    });
+
+    it("falls back to 'pi' when execPath is 'node' and script does not exist", async () => {
+      const originalExecPath = process.execPath;
+      const originalArgv = process.argv;
+      Object.defineProperty(process, "execPath", {
+        value: "/usr/local/bin/node",
+        configurable: true,
+      });
+      Object.defineProperty(process, "argv", {
+        value: ["/usr/local/bin/node", "/nonexistent/script.js"],
+        configurable: true,
+      });
+      const { existsSync } = await import("node:fs");
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc);
+
+      const resultPromise = runSubagent("test task", "/tmp");
+      proc.emit("close", 0);
+      await resultPromise;
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "pi",
+        expect.arrayContaining(["--mode", "json", "-p", "--no-session"]),
+        expect.any(Object),
+      );
+
+      Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
+      Object.defineProperty(process, "argv", { value: originalArgv, configurable: true });
     });
   });
 });

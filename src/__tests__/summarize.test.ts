@@ -21,7 +21,10 @@ describe("summarizeWithSubagent", () => {
   });
 
   it("calls onUpdate with 'summarizing' status", async () => {
-    const updates: Array<{ content: Array<{ type: string; text: string }>; details: { status: string } }> = [];
+    const updates: Array<{
+      content: Array<{ type: string; text: string }>;
+      details: { status: string };
+    }> = [];
     mockedRunSubagent.mockResolvedValue({ text: "summary", exitCode: 0, stderr: "" });
 
     await summarizeWithSubagent({

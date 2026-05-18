@@ -45,6 +45,7 @@ export function isBlockedHostname(hostname: string): boolean {
  * Check if an IPv4 address is private/internal.
  * Handles decimal, hex (0x...), and octal (0...) representations.
  */
+// eslint-disable-next-line complexity -- multi-branch IP classification for IPv4/IPv6/octal/hex
 function isPrivateIPv4(ip: string): boolean {
   // Normalize: strip leading zeros and handle octal/hex
   const parts = ip.split(".");
@@ -131,8 +132,14 @@ function isPrivateIPv6(ip: string): boolean {
   // ::1 (loopback)
   if (lower === "::1" || lower === "0:0:0:0:0:0:0:1") return true;
 
-  // fe80::/10 (link-local)
-  if (lower.startsWith("fe80:") || lower.startsWith("fe90:") || lower.startsWith("fea0:") || lower.startsWith("feb0:")) return true;
+  // fe80::/10 (link-local) — first 10 bits are 1111 1110 10
+  // Hex prefix range: fe80–febf (the 3rd and 4th hex chars span 8 bits)
+  if (lower.startsWith("fe")) {
+    const h = lower.slice(2, 4);
+    if (h >= "80" && h <= "bf") {
+      return true;
+    }
+  }
 
   // fc00::/7 (unique local: fc00::/8 and fd00::/8)
   if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
@@ -170,6 +177,42 @@ export async function isBlockedByDns(hostname: string): Promise<boolean> {
   return false;
 }
 
+/** Shared core SSRF validation logic.
+ *  Checks scheme, IPv6 literals, hostname blocklist, and DNS resolution.
+ *  Takes an optional context parameter for error messages (used by redirect variant).
+ *  Throws Error with descriptive message if blocked. */
+async function validateParsedUrlForSsrf(parsed: URL, context?: string): Promise<void> {
+  // Check scheme
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    const suffix = context ? ` (from ${context})` : "";
+    throw new Error(`Invalid URL: scheme must be http or https. Got: ${parsed.protocol}${suffix}.`);
+  }
+
+  // Check IPv6 address literals
+  if (parsed.hostname.startsWith("[") && parsed.hostname.endsWith("]")) {
+    const ipv6 = parsed.hostname.slice(1, -1);
+    if (isPrivateIPv6(ipv6)) {
+      const suffix = context ? ` (from ${context})` : "";
+      throw new Error(`Blocked: IPv6 address ${parsed.hostname} is internal/private${suffix}.`);
+    }
+  }
+
+  // Check hostname blocklist
+  if (isBlockedHostname(parsed.hostname)) {
+    const suffix = context ? ` from ${context}` : "";
+    throw new Error(
+      `Blocked: cannot fetch internal/private addresses (${parsed.hostname})${suffix}.`,
+    );
+  }
+
+  // Resolve hostname via DNS, check resolved IPs
+  const blocked = await isBlockedByDns(parsed.hostname);
+  if (blocked) {
+    const suffix = context ? ` (from ${context})` : "";
+    throw new Error(`Blocked: resolved IP for ${parsed.hostname} is internal/private${suffix}.`);
+  }
+}
+
 /** Full SSRF validation of a URL. Steps:
  *  1. Parse URL (throw descriptive Error if invalid)
  *  2. Check scheme is http or https
@@ -187,29 +230,7 @@ export async function validateUrlForSsrf(url: string): Promise<URL> {
     throw new Error(`Invalid URL: ${url}`);
   }
 
-  // Step 2: Check scheme
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(`Invalid URL: scheme must be http or https. Got: ${parsed.protocol}`);
-  }
-
-  // Step 2.5: Check IPv6 address literals for private/internal addresses
-  if (parsed.hostname.startsWith("[") && parsed.hostname.endsWith("]")) {
-    const ipv6 = parsed.hostname.slice(1, -1);
-    if (isPrivateIPv6(ipv6)) {
-      throw new Error(`Blocked: IPv6 address ${parsed.hostname} is internal/private.`);
-    }
-  }
-
-  // Step 3: Check hostname against static blocklist
-  if (isBlockedHostname(parsed.hostname)) {
-    throw new Error(`Blocked: cannot fetch internal/private addresses (${parsed.hostname}).`);
-  }
-
-  // Step 4: Resolve hostname via DNS, check resolved IPs
-  const blocked = await isBlockedByDns(parsed.hostname);
-  if (blocked) {
-    throw new Error(`Blocked: resolved IP for ${parsed.hostname} is internal/private.`);
-  }
+  await validateParsedUrlForSsrf(parsed);
 
   // Step 5: Return the parsed URL
   return parsed;
@@ -218,27 +239,5 @@ export async function validateUrlForSsrf(url: string): Promise<URL> {
 /** Validate a redirect target URL for SSRF. Same checks as validateUrlForSsrf.
  *  Takes the from URL for logging purposes. */
 export async function validateRedirectForSsrf(from: URL, to: URL): Promise<void> {
-  // Check scheme
-  if (to.protocol !== "http:" && to.protocol !== "https:") {
-    throw new Error(`Blocked: redirect to ${to.href} uses unsupported scheme ${to.protocol} (from ${from.href}).`);
-  }
-
-  // Check IPv6 address literals for private/internal addresses
-  if (to.hostname.startsWith("[") && to.hostname.endsWith("]")) {
-    const ipv6 = to.hostname.slice(1, -1);
-    if (isPrivateIPv6(ipv6)) {
-      throw new Error(`Blocked: IPv6 address ${to.hostname} is internal/private (from ${from.href}).`);
-    }
-  }
-
-  // Check hostname against static blocklist
-  if (isBlockedHostname(to.hostname)) {
-    throw new Error(`Blocked: redirect to internal/private address (${to.hostname}) from ${from.href}.`);
-  }
-
-  // Resolve hostname via DNS, check resolved IPs
-  const blocked = await isBlockedByDns(to.hostname);
-  if (blocked) {
-    throw new Error(`Blocked: redirect resolved IP for ${to.hostname} is internal/private (from ${from.href}).`);
-  }
+  await validateParsedUrlForSsrf(to, from.href);
 }

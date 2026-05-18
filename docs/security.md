@@ -33,6 +33,8 @@ The extension uses a **multi-layer SSRF defense**. Each layer is independent; by
 | Logic | `^https?:\/\/` (web URLs) or `^git@` (SSH URLs) |
 | Blocks | `file://`, `ftp://`, `gopher://`, `data://`, and all non-HTTP schemes. Also rejects any URL that doesn't match either pattern. |
 
+HTTPS URLs that pass the initial regex then go through `validateUrlForSsrf()` (in [`src/ssrf.ts`](../src/ssrf.ts)), which delegates to the shared `validateParsedUrlForSsrf()` helper for scheme, IPv6, blocklist, and DNS checks. SSH URLs are validated separately in Layer 7. |
+
 ### Layer 2 — Static Hostname Blocklist
 
 | Source file | `src/ssrf.ts` |
@@ -83,8 +85,8 @@ Normalization occurs inside `isPrivateIPv4()` before the private-range checks, s
 
 | Source file | `src/ssrf.ts` |
 |---|---|
-| Function | `validateUrlForSsrf()` (inline check) |
-| Location | Step 2.5, **before** the static hostname blocklist |
+| Function | `validateParsedUrlForSsrf()` (inline check) |
+| Location | Step 2, **before** the static hostname blocklist |
 
 When `parsed.hostname` is bracketed (`[::1]`), the brackets are stripped and the inner address is passed directly to `isPrivateIPv6()`. This check runs **before** `isBlockedHostname()` so that `[::1]` is caught by the IPv6 private check even though `[::1]` also appears in `BLOCKED_HOSTNAMES`.
 
@@ -92,22 +94,38 @@ When `parsed.hostname` is bracketed (`[::1]`), the brackets are stripped and the
 
 | Source file | `src/ssrf.ts` |
 |---|---|
-| Function | `validateRedirectForSsrf()` |
-| Called from | `src/fetch-content.ts`, inside the manual redirect loop |
+| Function | `validateRedirectForSsrf()` → `validateParsedUrlForSsrf()` |
+| Called from | `src/execute-web-fetch.ts`, inside the manual redirect loop |
+
+Both `validateUrlForSsrf()` (Layer 1 initial check) and `validateRedirectForSsrf()` (redirect check) share a common `validateParsedUrlForSsrf()` helper that runs scheme validation, IPv6 literal checking, static hostname blocklist, and DNS resolution. This eliminates duplication and ensures the same checks apply to both initial URLs and redirect targets.
 
 `fetch()` is called with `redirect: "manual"`, so the extension follows redirects itself. For every `3xx` response:
 
 1. The `Location` header is resolved to an absolute URL.
-2. `validateRedirectForSsrf(from, to)` runs the **full SSRF check** (scheme, IPv6 literal, static blocklist, DNS resolution) on the redirect target.
+2. `validateRedirectForSsrf(from, to)` delegates to `validateParsedUrlForSsrf(to, from.href)`, running the **full SSRF check** (scheme, IPv6 literal, static blocklist, DNS resolution) on the redirect target with context from the source URL.
 3. The loop caps at `MAX_REDIRECTS` (10) to prevent redirect-chain exhaustion.
 
 This prevents an attacker from hosting a public page that `302`s to `http://169.254.169.254/latest/meta-data/`.
+
+### Layer 7 — SSH URL SSRF Validation
+
+| Source file | `src/execute-repo-fetch.ts` |
+|---|---|
+| Function | `executeRepoFetch()` (SSH branch) |
+| Helpers | `isBlockedHostname()`, `isBlockedByDns()` from `src/ssrf.ts` |
+
+When the detected repository URL uses the SSH scheme (`git@host:owner/repo`), the hostname is extracted and checked against the same SSRF defenses used for HTTP URLs:
+
+1. **Static hostname blocklist** — `isBlockedHostname(hostname)` checks against `BLOCKED_HOSTNAMES` and `BLOCKED_HOSTNAME_PREFIXES`.
+2. **DNS resolution + private IP check** — `isBlockedByDns(hostname)` resolves the hostname and verifies no A/AAAA records point to private or internal addresses.
+
+This closes a gap where an attacker could use `git@127.0.0.1:...` or `git@10.0.0.1:...` to bypass HTTP-only SSRF checks.
 
 ---
 
 ## Git URL Sanitization
 
-`sanitizeGitUrl()` in [`src/fetch-content.ts`](../src/fetch-content.ts) applies seven sequential checks to the raw URL **before** it reaches `git clone`:
+`sanitizeGitUrl()` in [`src/sanitize-git-url.ts`](../src/sanitize-git-url.ts) applies seven sequential checks to the raw URL **before** it reaches `git clone`:
 
 | Step | Check | Pattern | Effect |
 |---|---|---|---|
@@ -117,15 +135,43 @@ This prevents an attacker from hosting a public page that `302`s to `http://169.
 | 4 | Shell metacharacters | `/[;|`$(){}!\\'"]/` | Rejects `;`, `|`, backtick, `$`, `(`, `)`, `{`, `}`, `!`, `\`, `'`, `"` |
 | 4b | Control characters | Loop `charCodeAt(i)` for `0x00–0x1f` | Blocks NUL, bell, escape, and other control codes that `\s` misses |
 | 5 | Character allowlist | `/^[a-zA-Z0-9\-_./:@#?=&]+$/` | Whitelist-only: only alphanumeric and `- _ . / : @ # ? = &` are permitted |
-| 6 | Credential stripping | `/^(https?:\/\/)([^/@]+@)(.+)$/` | Strips `user:pass@` from HTTPS URLs |
+| 6 | Credential stripping | URL API (`new URL()`) | Strips `user:pass@` from HTTPS URLs by setting `username` and `password` to empty strings |
 
 The allowlist (step 5) is the strongest guarantee: even if an earlier regex check is bypassed, any character outside the allowed set causes rejection.
 
 ---
 
+## Branch Validation
+
+In `executeRepoFetch()` ([`src/execute-repo-fetch.ts`](../src/execute-repo-fetch.ts)), the optional `branch` parameter is validated against git naming rules **before** being passed to `git clone --branch`:
+
+| Rule | Check |
+|---|---|
+| Max length | `branch.length <= 256` |
+| Allowed characters | `/^[a-zA-Z0-9\/._-]+$/` — alphanumeric, `/`, `.`, `_`, `-` |
+| No `..` | `branch.includes("..")` — prevents path traversal in branch refs |
+| No `~ ^ :` | `/[~^:]/.test(branch)` — git metacharacters that have special meaning |
+| Can't end with `/` | `branch.endsWith("/")` |
+| Can't end with `.` | `branch.endsWith(".")` |
+| Can't end with `.lock` | `branch.endsWith(".lock")` |
+
+If validation fails, the branch name is included in the error message (truncated to 50 characters) along with the allowed character rules. This prevents an attacker from injecting git flags or ref manipulation via the branch parameter.
+
+## Git Error Sanitization
+
+When `git clone` fails in `executeRepoFetch()` ([`src/execute-repo-fetch.ts`](../src/execute-repo-fetch.ts)), the error message is **sanitized** to exclude raw `stderr` output:
+
+```ts
+throw new Error(
+  `git clone failed for ${owner}/${repo}. ${result.code ? `Exit code: ${result.code}.` : "Unknown error."}`,
+);
+```
+
+Only the **exit code** is reported — never the full stderr. Git error messages can leak sensitive information such as filesystem paths, server configuration details, or network topology. The partial clone directory is also cleaned up on failure via `fs.rm({ recursive: true, force: true })`.
+
 ## TOCTOU Mitigation
 
-In `executeRepoFetch()` ([`src/fetch-content.ts`](../src/fetch-content.ts)), before cloning:
+In `executeRepoFetch()` ([`src/execute-repo-fetch.ts`](../src/execute-repo-fetch.ts)), before cloning:
 
 ```ts
 const lstat = await fs.lstat(targetPath).catch(() => null);
@@ -144,10 +190,10 @@ if (lstat?.isSymbolicLink()) {
 
 | Constant | Value | Location | Purpose |
 |---|---|---|---|
-| `MAX_RESPONSE_BYTES` | 10 MB (`10 * 1024 * 1024`) | `fetch-content.ts` | Streaming body size cap |
-| `MAX_REDIRECTS` | 10 | `fetch-content.ts` | Redirect chain limit |
-| `FETCH_TIMEOUT_MS` | 30 000 ms (30 s) | `fetch-content.ts` | `AbortSignal.timeout()` on fetch |
-| `GIT_CLONE_TIMEOUT_MS` | 120 000 ms (120 s) | `fetch-content.ts` | `pi.exec()` timeout for `git clone` |
+| `MAX_RESPONSE_BYTES` | 10 MB (`10 * 1024 * 1024`) | `fetch-constants.ts` | Streaming body size cap |
+| `MAX_REDIRECTS` | 10 | `fetch-constants.ts` | Redirect chain limit |
+| `FETCH_TIMEOUT_MS` | 30 000 ms (30 s) | `fetch-constants.ts` | `AbortSignal.timeout()` on fetch |
+| `GIT_CLONE_TIMEOUT_MS` | 120 000 ms (120 s) | `fetch-constants.ts` | `pi.exec()` timeout for `git clone` |
 
 ### Why Streaming Over `Content-Length`
 
@@ -227,18 +273,24 @@ function stripCredentials(parsed: URL): string {
 
 This produces a `sanitizedUrl` (e.g., `https://github.com/org/repo`) that is returned in the `RepoUrlResult`. The sanitized URL is what flows through the rest of the pipeline — including SSRF validation and logging.
 
-### 2. `sanitizeGitUrl()` in `fetch-content.ts`
+### 2. `sanitizeGitUrl()` in `sanitize-git-url.ts`
 
-As step 6 of the sanitization pipeline, `sanitizeGitUrl()` applies a second regex-based credential strip:
+As step 6 of the sanitization pipeline, `sanitizeGitUrl()` applies a second credential strip using the **URL API** (not regex), mirroring the approach in `detect-repo-url.ts`:
 
 ```ts
-const httpsWithCreds = url.match(/^(https?:\/\/)([^/@]+@)(.+)$/);
-if (httpsWithCreds) {
-  return httpsWithCreds[1] + httpsWithCreds[3];
+try {
+  const parsed = new URL(url);
+  if (parsed.username || parsed.password) {
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString();
+  }
+} catch {
+  // Not a URL-parseable string (e.g., SSH URL); fall through
 }
 ```
 
-This catches any HTTPS URL with embedded credentials that may have reached this function through a path other than `isRepoUrl()`. Both functions together ensure credentials never appear in tool logs, error messages, or subprocess arguments.
+This catches any HTTPS URL with embedded credentials that may have reached this function through a path other than `isRepoUrl()`. Both functions together ensure credentials never appear in tool logs, error messages, or subprocess arguments. SSH URLs (e.g., `git@host:owner/repo`) are not parseable by the URL API and fall through unchanged.
 
 ---
 
@@ -246,11 +298,14 @@ This catches any HTTPS URL with embedded credentials that may have reached this 
 
 | Threat | Primary defense | Backup defense |
 |---|---|---|
-| SSRF | `validateUrlForSsrf()` — static blocklist + DNS check | Manual redirect loop with `validateRedirectForSsrf()` |
+| SSRF (HTTP) | `validateUrlForSsrf()` — static blocklist + DNS check | Manual redirect loop with `validateRedirectForSsrf()` |
+| SSRF (SSH) | `isBlockedHostname()` + `isBlockedByDns()` on SSH hostname | `sanitizeGitUrl()` allowlist limits hostname characters |
 | Command injection | `sanitizeGitUrl()` — 7-step sanitization + allowlist | `shell: false` in all subprocess spawns |
 | DNS rebinding | `isBlockedByDns()` — resolve and check at fetch time | Static hostname blocklist catches common cases |
 | Redirect SSRF | `redirect: "manual"` + per-redirect SSRF validation | `MAX_REDIRECTS` cap (10) |
 | Path traversal | Owner/repo `..` and `.` check in `executeRepoFetch()` | `sanitizeGitUrl()` allowlist blocks `..` (not in allowed chars) |
+| Branch injection | Branch name validation (alphanumeric + `/._-`, max 256 chars, no `..~^:`, can't end with `.lock`/`.`/`) | `sanitizeGitUrl()` allowlist limits URL characters |
 | Content bombing | Streaming `readResponseWithSizeLimit()` at 10 MB | `FETCH_TIMEOUT_MS` (30 s) and `GIT_CLONE_TIMEOUT_MS` (120 s) |
 | Symlink attacks | `fs.lstat()` pre-clone symlink check | Clone target is always under `/tmp/repository-{owner}/` |
-| Credential leakage | `stripCredentials()` + `sanitizeGitUrl()` regex | `--no-session` prevents subagent from seeing prior context |
+| Credential leakage | `stripCredentials()` + `sanitizeGitUrl()` via URL API | `--no-session` prevents subagent from seeing prior context |
+| Git error leakage | Clone errors sanitized to exit code only (no raw stderr) | Partial clone directory cleaned up on failure |

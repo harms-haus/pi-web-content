@@ -18,7 +18,7 @@ interface SubagentEvent {
   message?: Message;
 }
 
-export interface SubagentResult {
+interface SubagentResult {
   text: string;
   exitCode: number;
   stderr: string;
@@ -30,6 +30,7 @@ export interface SubagentResult {
  */
 function getPiInvocation(args: string[]): { command: string; args: string[] } {
   const currentScript = process.argv[1];
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- process.argv[1] can be undefined
   const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
   if (currentScript && !isBunVirtualScript && fs.existsSync(currentScript)) {
     return { command: process.execPath, args: [currentScript, ...args] };
@@ -65,7 +66,12 @@ function getFinalOutput(messages: Message[]): string {
  * @param signal - AbortSignal for cancellation
  * @returns The assistant's final text output
  */
-export async function runSubagent(task: string, cwd: string, signal?: AbortSignal): Promise<SubagentResult> {
+/* eslint-disable max-lines-per-function */
+export async function runSubagent(
+  task: string,
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<SubagentResult> {
   const args: string[] = ["--mode", "json", "-p", "--no-session"];
   args.push(`Task: ${task}`);
 
@@ -89,6 +95,7 @@ export async function runSubagent(task: string, cwd: string, signal?: AbortSigna
       if (!line.trim()) return;
       let event: SubagentEvent;
       try {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         event = JSON.parse(line);
       } catch {
         return;
@@ -155,8 +162,12 @@ export async function runSubagent(task: string, cwd: string, signal?: AbortSigna
   });
 
   const stderr = stderrChunks.join("");
-  const finalStderr = stderrTruncated ? `${stderr.slice(0, MAX_STDERR_LENGTH)}\n[stderr truncated]` : stderr;
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- set via closure in async callbacks
+  const finalStderr = stderrTruncated
+    ? `${stderr.slice(0, MAX_STDERR_LENGTH)}\n[stderr truncated]`
+    : stderr;
 
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- set via closure in async callbacks
   if (wasAborted) {
     return { text: "", exitCode, stderr: finalStderr, error: "Subagent was aborted" };
   }
@@ -174,3 +185,4 @@ export async function runSubagent(task: string, cwd: string, signal?: AbortSigna
 
   return { text, exitCode, stderr: finalStderr };
 }
+/* eslint-enable max-lines-per-function */

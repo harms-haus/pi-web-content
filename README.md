@@ -61,9 +61,11 @@ pi -e git:github.com/harms-haus/pi-web-content
 ## Security
 
 This extension includes:
-- **SSRF protection**: Blocks requests to internal/private IP addresses (localhost, 10.x, 192.168.x, 169.254.x, etc.)
+- **SSRF protection**: Blocks requests to internal/private IP addresses (localhost, 10.x, 192.168.x, 169.254.x, fe80::/10 IPv6, etc.) including SSH URL hostname blocklist with DNS resolution check
 - **Streaming size guard**: Rejects responses larger than 10 MB (enforced via streaming byte counting)
 - **Path traversal protection**: Validates repository owner/names from URLs
+- **Branch name validation**: Rejects dangerous characters in `--branch` arguments to prevent git injection
+- **Git error sanitization**: Raw stderr is never exposed to callers — only sanitized messages are returned
 - **Injection-resistant delimiters**: Uses unique tokens for content boundaries in subagent prompts
 - **URL scheme validation**: Only HTTPS and SSH URLs for git clone; only HTTP(S) for web fetch
 
@@ -72,7 +74,11 @@ This extension includes:
 ```
 src/
 ├── index.ts              # Extension entry point
-├── fetch-content.ts      # Unified tool: web content + git repos
+├── fetch-content.ts      # Tool router: dispatches to web/repo executors
+├── fetch-constants.ts    # Configurable constants (timeouts, limits, headers)
+├── execute-web-fetch.ts  # Web fetch flow with redirect and content-type handling
+├── execute-repo-fetch.ts # Git clone flow and repo content handling
+├── sanitize-git-url.ts   # Git URL sanitization for command injection prevention
 ├── detect-repo-url.ts    # Git repository URL detection
 ├── parse-repo-url.ts     # Git URL owner/repo extraction
 ├── subagent.ts           # Pi subprocess invocation
@@ -85,7 +91,7 @@ src/
 Dependencies:
 - [turndown](https://github.com/mixmark-io/turndown) + [turndown-plugin-gfm](https://github.com/mixmark-io/turndown-plugin-gfm) — HTML to Markdown conversion with GFM support
 - [@mozilla/readability](https://github.com/mozilla/readability) — Article content extraction (same engine as Firefox Reader View)
-- [jsdom](https://github.com/jsdom/jsdom) — DOM implementation for Node.js
+- [jsdom](https://github.com/jsdom/jsdom) — DOM implementation for Node.js (lazy-loaded, ~7.5 MB saved at startup)
 
 ## Documentation
 

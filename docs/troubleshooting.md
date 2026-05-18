@@ -33,7 +33,7 @@ The full list of blocked hostname prefixes and DNS-checked IP ranges is defined 
 
 | Field | Details |
 |-------|---------|
-| **Symptom** | `git clone failed: <stderr output>` |
+| **Symptom** | `git clone failed for <owner>/<repo>. Exit code: <code>.` |
 | **Cause** | The underlying `git clone --depth 1 --single-branch` command returned a non-zero exit code. Common causes include:<br>• **Repository doesn't exist** — the URL is incorrect or the repo was deleted.<br>• **Private repository** — no SSH key or credentials configured for `git`.<br>• **Git not installed** — `git` is not available in the system PATH.<br>• **Network / firewall** — outbound connections to the git host are blocked.<br>• **Branch doesn't exist** — the `--branch` parameter specified a non-existent branch.<br>• **Permissions** — the `/tmp/repository-{owner}` directory cannot be created (filesystem permissions, disk full). |
 | **Resolution** | Check the stderr output in the error message for the specific git error. Verify the URL in a browser, ensure `git` is installed (`git --version`), and check network connectivity. For SSH (`git@`) URLs, confirm your SSH keys are configured. |
 
@@ -89,16 +89,10 @@ Cloned repos are placed at `/tmp/repository-{owner}/{repo}` and persist after th
 | **Cause** | The URL does not match one of the supported schemes:<br>• `http://` or `https://` — for web fetches and HTTPS git URLs<br>• `git@` — for SSH git URLs (e.g., `git@github.com:org/repo.git`)<br>Other schemes like `ftp://`, `file://`, `data://`, etc. are rejected. |
 | **Resolution** | Use a supported URL scheme. For SSH git access, use the `git@host:org/repo` format. For web content, ensure the URL starts with `http://` or `https://`. |
 
-Additional URL validation errors may occur for git URLs:
+## Branch Validation Errors
 
-| Error | Cause |
-|-------|-------|
-| `Invalid repository URL: empty or exceeds maximum length.` | URL is empty or longer than 2048 characters. |
-| `Invalid repository URL: must not contain whitespace.` | URL contains spaces, tabs, or newlines. |
-| `Invalid repository URL: ext:: protocol is not allowed.` | URL contains `ext::` (git remote helper injection). |
-| `Invalid repository URL: contains shell metacharacters.` | URL contains `;`, `\|`, `` ` ``, `$`, `()`, `{}`, `!`, `\`, `'`, or `"`. |
-| `Invalid repository URL: contains control characters.` | URL contains ASCII control characters (0x00–0x1f). |
-| `Invalid repository URL: contains disallowed characters.` | URL contains characters outside the allowed set (`a-zA-Z0-9-_. /:@#?=&`). |
-| `Could not parse repository URL: <url>` | URL was detected as a git repo but owner/repo could not be extracted. |
-| `Invalid repository owner or name in URL.` | URL contains `.` or `..` path traversal components. |
-| `Refusing to clone: <path> is a symbolic link.` | TOCTOU protection: target directory is a symlink. |
+| Field | Details |
+|-------|---------|
+| **Symptom** | `Invalid branch name: <name>. Branch names must contain only alphanumeric characters, /, ., _, and -; cannot contain .., ~, ^, or :, and cannot end with .lock, /, or .` |
+| **Cause** | The `branch` parameter contains invalid characters (shell metacharacters, spaces, control characters, etc.) or uses disallowed patterns like `..`, `~`, `^`, `:`, or ends with `.lock`, `/`, or `.`. The branch name is validated before the `git clone` command is constructed to prevent command injection. |
+| **Resolution** | Use valid git branch names containing only alphanumeric characters, `/`, `.`, `_`, and `-`. Avoid shell metacharacters, spaces, and control characters. |

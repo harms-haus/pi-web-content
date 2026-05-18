@@ -1,25 +1,41 @@
 {
   "name": "pi-web-content",
-  "private": true,
   "version": "1.0.0",
+  "description": "Web content fetching and git repository cloning extension for the pi coding agent",
   "type": "module",
+  "main": "src/index.ts",
+  "files": [
+    "src/**/*.{ts,js,map}",
+    "docs/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "keywords": [
     "pi-package"
   ],
-  "scripts": {
-    "clean": "rm -rf dist",
-    "build": "echo 'nothing to build'",
-    "check": "npx biome check src/",
-    "lint": "npx biome lint src/",
-    "format": "npx biome format --write src/",
-    "test": "npx vitest run",
-    "typecheck": "npx tsc --noEmit"
-  },
   "pi": {
     "extensions": [
       "./src/index.ts"
     ]
   },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "echo 'nothing to build'",
+    "lint": "eslint src/",
+    "format": "prettier --write src/",
+    "format:check": "prettier --check src/",
+    "test": "npx vitest run",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "npx tsc --noEmit"
+  },
+  "license": "MIT",
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
     "jsdom": "^26.0.0",
@@ -29,6 +45,11 @@
   "devDependencies": {
     "@types/jsdom": "^28.0.3",
     "@types/turndown": "^5.0.5",
+    "@vitest/coverage-v8": "^4.1.6",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.3",
+    "typescript-eslint": "^8.59.3",
     "vitest": "^4.1.6"
   },
   "peerDependencies": {
