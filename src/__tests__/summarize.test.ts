@@ -38,8 +38,8 @@ describe("summarizeWithSubagent", () => {
     });
 
     expect(updates).toHaveLength(1);
-    expect(updates[0].details.status).toBe("summarizing");
-    expect(updates[0].content[0].text).toContain("Summarizing");
+    expect(updates[0]!.details.status).toBe("summarizing");
+    expect(updates[0]!.content[0]!.text).toContain("Summarizing");
   });
 
   it("constructs prompt with content and user instruction", async () => {
@@ -55,7 +55,7 @@ describe("summarizeWithSubagent", () => {
     });
 
     expect(mockedRunSubagent).toHaveBeenCalledTimes(1);
-    const taskPrompt = mockedRunSubagent.mock.calls[0][0];
+    const taskPrompt = mockedRunSubagent.mock.calls[0]![0];
 
     // Verify role context
     expect(taskPrompt).toContain("You are summarizing content from a web page.");
@@ -116,7 +116,7 @@ describe("summarizeWithSubagent", () => {
       cwd: "/tmp",
     });
 
-    const taskPrompt = mockedRunSubagent.mock.calls[0][0];
+    const taskPrompt = mockedRunSubagent.mock.calls[0]![0];
     expect(taskPrompt).toContain("---CONTENT_BOUNDARY_00000000-0000-0000-0000-000000000000---");
   });
 
@@ -130,7 +130,7 @@ describe("summarizeWithSubagent", () => {
       cwd: "/tmp",
     });
 
-    expect(result.content[0].text).toBe("(no summary produced)");
+    expect(result.content[0]!.text).toBe("(no summary produced)");
   });
 
   it("omits URL and title from prompt when not provided", async () => {
@@ -143,7 +143,7 @@ describe("summarizeWithSubagent", () => {
       cwd: "/tmp",
     });
 
-    const taskPrompt = mockedRunSubagent.mock.calls[0][0];
+    const taskPrompt = mockedRunSubagent.mock.calls[0]![0];
     expect(taskPrompt).not.toContain("URL:");
     expect(taskPrompt).not.toContain("Title:");
   });

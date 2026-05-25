@@ -294,8 +294,8 @@ describe("fetch_content tool", () => {
         undefined,
         createContext(),
       );
-      expect(result.content[0].text).toContain("JSON Response");
-      expect(result.content[0].text).toContain('"key": "value"');
+      expect(result.content[0]!.text).toContain("JSON Response");
+      expect(result.content[0]!.text).toContain('"key": "value"');
     });
 
     it("handles plain text responses", async () => {
@@ -313,8 +313,8 @@ describe("fetch_content tool", () => {
         undefined,
         createContext(),
       );
-      expect(result.content[0].text).toContain("Text Response");
-      expect(result.content[0].text).toContain("Hello plain text");
+      expect(result.content[0]!.text).toContain("Text Response");
+      expect(result.content[0]!.text).toContain("Hello plain text");
     });
 
     it("handles HTML responses", async () => {
@@ -332,7 +332,7 @@ describe("fetch_content tool", () => {
         undefined,
         createContext(),
       );
-      expect(result.content[0].text).toContain("Test Page");
+      expect(result.content[0]!.text).toContain("Test Page");
     });
 
     it("rejects binary content types", async () => {
@@ -407,8 +407,8 @@ describe("fetch_content tool", () => {
         undefined,
         createContext(),
       );
-      expect(result.content[0].text).toContain("Text Response");
-      expect(result.content[0].text).toContain("a,b,c");
+      expect(result.content[0]!.text).toContain("Text Response");
+      expect(result.content[0]!.text).toContain("a,b,c");
     });
   });
 
@@ -554,7 +554,7 @@ describe("fetch_content tool", () => {
         createContext(),
       );
       expect(ssrf.validateRedirectForSsrf).toHaveBeenCalled();
-      expect(result.content[0].text).toContain("https://example.com/final");
+      expect(result.content[0]!.text).toContain("https://example.com/final");
     });
 
     it("blocks redirects to internal addresses", async () => {
@@ -1270,7 +1270,7 @@ describe("fetch_content tool", () => {
       );
 
       // Verify exec is called with an array (not shell string), containing --branch and the branch name
-      const execCall = mockExec.mock.calls[0];
+      const execCall = mockExec.mock.calls[0]!;
       expect(execCall[0]).toBe("git");
       expect(Array.isArray(execCall[1])).toBe(true);
       expect(execCall[1]).toContainEqual("--branch");
@@ -1294,7 +1294,7 @@ describe("fetch_content tool", () => {
         createContext(),
       );
 
-      const execArgs = mockExec.mock.calls[0][1] as string[];
+      const execArgs = mockExec.mock.calls[0]![1] as string[];
       expect(execArgs).not.toContain("--branch");
     });
   });
@@ -1589,7 +1589,7 @@ describe("fetch_content tool", () => {
 
       // Should not throw; should return a result with empty-ish content
       expect(result).toBeDefined();
-      expect(result.content[0].text).toBeDefined();
+      expect(result.content[0]!.text).toBeDefined();
     });
 
     it("handles response with empty stream body", async () => {
@@ -1619,7 +1619,7 @@ describe("fetch_content tool", () => {
       );
 
       expect(result).toBeDefined();
-      expect(result.content[0].text).toBeDefined();
+      expect(result.content[0]!.text).toBeDefined();
     });
   });
 
@@ -1644,10 +1644,10 @@ describe("fetch_content tool", () => {
       );
 
       // Empty content-type falls through to the else branch which renders raw content
-      expect(result.content[0].text).toContain("Some raw content");
+      expect(result.content[0]!.text).toContain("Some raw content");
       // Should NOT be wrapped in a code block (that's for text/plain / JSON)
-      expect(result.content[0].text).not.toContain("Text Response");
-      expect(result.content[0].text).not.toContain("JSON Response");
+      expect(result.content[0]!.text).not.toContain("Text Response");
+      expect(result.content[0]!.text).not.toContain("JSON Response");
     });
   });
 

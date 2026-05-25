@@ -124,11 +124,11 @@ export async function executeWebFetch(
     if (err instanceof Error) {
       if (err.message.startsWith("Blocked:")) throw err;
       if (err.name === "AbortError" || signal?.aborted) {
-        throw new Error(`Fetch cancelled for ${url}`);
+        throw new Error(`Fetch cancelled for ${url}`, { cause: err });
       }
-      throw new Error(`Failed to fetch ${url}: ${err.message}`);
+      throw new Error(`Failed to fetch ${url}: ${err.message}`, { cause: err });
     }
-    throw new Error(`Failed to fetch ${url}: ${String(err)}`);
+    throw new Error(`Failed to fetch ${url}: ${String(err)}`, { cause: err });
   }
 
   // TypeScript narrowing: response is guaranteed defined after the try/catch

@@ -58,7 +58,9 @@ function isPrivateIPv4(ip: string): boolean {
     numericParts.push(parsed);
   }
 
-  const [a, b] = numericParts;
+  const a = numericParts[0];
+  const b = numericParts[1];
+  if (a === undefined || b === undefined) return false;
 
   // 10.x.x.x
   if (a === 10) return true;
@@ -114,14 +116,19 @@ function isPrivateIPv6(ip: string): boolean {
   // IPv4-mapped IPv6 in dotted-decimal: ::ffff:x.x.x.x
   const mappedMatch = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
   if (mappedMatch) {
-    return isPrivateIPv4(mappedMatch[1]);
+    const ip = mappedMatch[1];
+    if (ip === undefined) return false;
+    return isPrivateIPv4(ip);
   }
 
   // IPv4-mapped IPv6 in hex format: ::ffff:XXXX:XXXX
   const mappedHex = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
   if (mappedHex) {
-    const hi = parseInt(mappedHex[1], 16);
-    const lo = parseInt(mappedHex[2], 16);
+    const hiStr = mappedHex[1];
+    const loStr = mappedHex[2];
+    if (hiStr === undefined || loStr === undefined) return false;
+    const hi = parseInt(hiStr, 16);
+    const lo = parseInt(loStr, 16);
     const a = (hi >> 8) & 0xff;
     const b = hi & 0xff;
     const c = (lo >> 8) & 0xff;

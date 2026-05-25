@@ -57,6 +57,9 @@ export async function executeRepoFetch(
     const sshHostMatch = sshUrl.match(/^git@([^:]+):/);
     if (sshHostMatch) {
       const hostname = sshHostMatch[1];
+      if (!hostname) {
+        throw new Error("Could not extract hostname from SSH URL.");
+      }
       if (isBlockedHostname(hostname)) {
         throw new Error(`Blocked: cannot clone from internal/private hostname (${hostname}).`);
       }

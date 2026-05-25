@@ -127,9 +127,11 @@ export function isRepoUrl(url: string): RepoUrlResult {
 
   // SourceHut: /~owner/repo pattern
   if (hostname === "git.sr.ht" || hostname === "sr.ht") {
-    if (segments.length >= 2 && segments[0].startsWith("~")) {
+    const seg0 = segments[0];
+    const seg2 = segments[2];
+    if (segments.length >= 2 && seg0 !== undefined && seg0.startsWith("~")) {
       // Check if third segment (if any) is a non-repo segment
-      if (segments.length >= 3 && NON_REPO_SEGMENTS.has(segments[2])) {
+      if (segments.length >= 3 && seg2 !== undefined && NON_REPO_SEGMENTS.has(seg2)) {
         return { isRepo: false, scheme: "https", sanitizedUrl };
       }
       return { isRepo: true, scheme: "https", sanitizedUrl };
@@ -142,22 +144,22 @@ export function isRepoUrl(url: string): RepoUrlResult {
     return { isRepo: false, scheme: "https", sanitizedUrl };
   }
 
-  // Check if the first meaningful segment is a non-repo page
-  // (e.g., github.com/issues, github.com/explore, etc.)
-  if (NON_REPO_SEGMENTS.has(segments[0])) {
+  const seg0 = segments[0];
+  if (seg0 !== undefined && NON_REPO_SEGMENTS.has(seg0)) {
     return { isRepo: false, scheme: "https", sanitizedUrl };
   }
 
   // If there are more than 2 segments, check the third segment
   if (segments.length >= 3) {
+    const seg2 = segments[2];
     // GitLab: /owner/repo/-/tree/branch pattern
-    if (segments[2] === "-" && segments.length >= 4) {
+    if (seg2 === "-" && segments.length >= 4) {
       const gitlabSection = segments[3];
-      if (REPO_SUBPATHS.has(gitlabSection)) {
+      if (gitlabSection !== undefined && REPO_SUBPATHS.has(gitlabSection)) {
         return { isRepo: true, scheme: "https", sanitizedUrl };
       }
       // GitLab non-repo sections like /-/issues, /-/merge_requests
-      if (NON_REPO_SEGMENTS.has(gitlabSection)) {
+      if (gitlabSection !== undefined && NON_REPO_SEGMENTS.has(gitlabSection)) {
         return { isRepo: false, scheme: "https", sanitizedUrl };
       }
       // Other /-/ paths are likely repo content
@@ -165,12 +167,12 @@ export function isRepoUrl(url: string): RepoUrlResult {
     }
 
     // Check if third segment is a repo-like subpath
-    if (REPO_SUBPATHS.has(segments[2])) {
+    if (seg2 !== undefined && REPO_SUBPATHS.has(seg2)) {
       return { isRepo: true, scheme: "https", sanitizedUrl };
     }
 
     // Check if third segment is a non-repo segment
-    if (NON_REPO_SEGMENTS.has(segments[2])) {
+    if (seg2 !== undefined && NON_REPO_SEGMENTS.has(seg2)) {
       return { isRepo: false, scheme: "https", sanitizedUrl };
     }
   }

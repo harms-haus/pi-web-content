@@ -480,8 +480,8 @@ describe("subagent", () => {
       proc.emit("close", 0);
       await resultPromise;
 
-      const callArgs = mockSpawn.mock.calls[0][1] as string[];
-      const lastArg = callArgs[callArgs.length - 1];
+      const callArgs = mockSpawn.mock.calls[0]![1] as string[];
+      const lastArg = callArgs[callArgs.length - 1]!;
       expect(lastArg).toContain("my specific task");
     });
 
@@ -543,8 +543,8 @@ describe("subagent", () => {
         expect.any(Object),
       );
       // Script should be the first arg
-      const callArgs = mockSpawn.mock.calls[0][1] as string[];
-      expect(callArgs[0]).toBe(scriptPath);
+      const callArgs = mockSpawn.mock.calls[0]![1] as string[];
+      expect(callArgs[0]!).toBe(scriptPath);
 
       Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
       Object.defineProperty(process, "argv", { value: originalArgv, configurable: true });

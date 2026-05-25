@@ -30,7 +30,6 @@ interface SubagentResult {
  */
 function getPiInvocation(args: string[]): { command: string; args: string[] } {
   const currentScript = process.argv[1];
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- process.argv[1] can be undefined
   const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
   if (currentScript && !isBunVirtualScript && fs.existsSync(currentScript)) {
     return { command: process.execPath, args: [currentScript, ...args] };
@@ -49,10 +48,9 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 function getFinalOutput(messages: Message[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-    if (msg.role === "assistant") {
-      for (const part of msg.content) {
-        if (part.type === "text") return part.text;
-      }
+    if (!msg || msg.role !== "assistant") continue;
+    for (const part of msg.content) {
+      if (typeof part !== "string" && part.type === "text") return part.text;
     }
   }
   return "";
