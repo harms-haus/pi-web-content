@@ -61,9 +61,17 @@ Comparison is case-insensitive (`hostname.toLowerCase()`). This catches obvious 
 After the static blocklist passes, the hostname is resolved via the system DNS resolver. Every returned A and AAAA record is checked:
 
 - **`isPrivateIPv4()`** — flags `10.0.0.0/8`, `127.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, and `0.0.0.0/8`.
-- **`isPrivateIPv6()`** — flags `::1` (loopback), IPv6 link-local (`fe80::`, `fe90::`, `fea0::`, `feb0::` — only the first four /12 subnets, not the full `fe80::/10` range `fe80`–`febf`), `fc00::/7` (unique-local), and IPv4-mapped addresses (`::ffff:x.x.x.x` in both dotted-decimal and hex `::ffff:XXXX:XXXX` forms).
+- **`isPrivateIPv6()`** — flags `::1` (loopback), IPv6 link-local addresses (`fe80::/10` — matches `fe80` through `febf`), `fc00::/7` (unique-local), and IPv4-mapped addresses (`::ffff:x.x.x.x` in both dotted-decimal and hex `::ffff:XXXX:XXXX` forms).
 
-If **any** resolved address is private, the request is blocked. DNS resolution failures are silently ignored (a failed lookup is not treated as safe).
+If **any** resolved address is private, the request is blocked.
+
+DNS resolution is **fail-closed**: `isBlockedByDns()` uses `Promise.allSettled` to resolve both IPv4 (`resolve4`) and IPv6 (`resolve6`) in parallel. If **both** resolutions fail (i.e., no A or AAAA records are returned at all), the function throws:
+
+```
+Blocked: could not resolve hostname "..." via DNS (resolution failed for both IPv4 and IPv6).
+```
+
+A hostname that cannot be resolved at all is treated as blocked rather than allowed.
 
 ### Layer 4 — Non-Decimal IP Normalization
 
@@ -134,10 +142,10 @@ This closes a gap where an attacker could use `git@127.0.0.1:...` or `git@10.0.0
 | 3 | `ext::` protocol | `/ext::/i` | Blocks [git ext remote helpers](https://git-scm.com/docs/gitremote-helpers), a known command injection vector |
 | 4 | Shell metacharacters | `/[;|`$(){}!\\'"]/` | Rejects `;`, `|`, backtick, `$`, `(`, `)`, `{`, `}`, `!`, `\`, `'`, `"` |
 | 4b | Control characters | Loop `charCodeAt(i)` for `0x00–0x1f` | Blocks NUL, bell, escape, and other control codes that `\s` misses |
-| 5 | Character allowlist | `/^[a-zA-Z0-9\-_./:@#?=&]+$/` | Whitelist-only: only alphanumeric and `- _ . / : @ # ? = &` are permitted |
+| 5 | Character allowlist | `/^[a-zA-Z0-9\-_./:@#?=&%]+$/` | Whitelist-only: only alphanumeric, `- _ . / : @ # ? = & %` are permitted (`%` supports percent-encoded URLs) |
 | 6 | Credential stripping | URL API (`new URL()`) | Strips `user:pass@` from HTTPS URLs by setting `username` and `password` to empty strings |
 
-The allowlist (step 5) is the strongest guarantee: even if an earlier regex check is bypassed, any character outside the allowed set causes rejection.
+The allowlist (step 5) is the strongest guarantee: even if an earlier regex check is bypassed, any character outside the allowed set causes rejection. The `%` character is included to support percent-encoded URLs (e.g., `https://github.com/org/repo%20name`).
 
 ---
 
@@ -157,6 +165,16 @@ In `executeRepoFetch()` ([`src/execute-repo-fetch.ts`](../src/execute-repo-fetch
 
 If validation fails, the branch name is included in the error message (truncated to 50 characters) along with the allowed character rules. This prevents an attacker from injecting git flags or ref manipulation via the branch parameter.
 
+## Windows Reserved Device Names
+
+In `executeRepoFetch()` ([`src/execute-repo-fetch.ts`](../src/execute-repo-fetch.ts)), the parsed `owner` and `repo` segments are checked against Windows reserved device names:
+
+```ts
+const WINDOWS_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i;
+```
+
+This blocks `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, and `LPT1`–`LPT9` as owner or repo names on **all** platforms (not just Windows). On Windows, these names are treated as device paths by the kernel — a directory named `CON` could resolve to the console device rather than a filesystem path, enabling path-based attacks. The check applies universally so that cross-platform clones never create paths that would be dangerous on Windows.
+
 ## Git Error Sanitization
 
 When `git clone` fails in `executeRepoFetch()` ([`src/execute-repo-fetch.ts`](../src/execute-repo-fetch.ts)), the error message is **sanitized** to exclude raw `stderr` output:
@@ -167,7 +185,7 @@ throw new Error(
 );
 ```
 
-Only the **exit code** is reported — never the full stderr. Git error messages can leak sensitive information such as filesystem paths, server configuration details, or network topology. The partial clone directory is also cleaned up on failure via `fs.rm({ recursive: true, force: true })`.
+Only the **exit code** is reported — never the full stderr. Git error messages can leak sensitive information such as filesystem paths, server configuration details, or network topology. The partial clone directory is also cleaned up on failure via `fs.rm({ recursive: true, force: true })`. The `fs.rm` error handler only catches `ENOTEMPTY` (which can occur during race conditions); all other errors (e.g., `EACCES`, `EPERM`, `EBUSY`) are propagated.
 
 ## TOCTOU Mitigation
 
@@ -180,9 +198,9 @@ if (lstat?.isSymbolicLink()) {
 }
 ```
 
-**What it prevents:** An attacker who can pre-create a symlink at `/tmp/repository-{owner}/{repo}` (e.g., via a prior request with a crafted owner name, or through a separate vulnerability) could cause `git clone` to write repository contents to an arbitrary filesystem location. The `lstat` check (which does **NOT** follow the link, unlike `stat`) detects this and aborts.
+**What it prevents:** An attacker who can pre-create a symlink at `os.tmpdir()/repository-{owner}/{repo}` (e.g., via a prior request with a crafted owner name, or through a separate vulnerability) could cause `git clone` to write repository contents to an arbitrary filesystem location. The `lstat` check (which does **NOT** follow the link, unlike `stat`) detects this and aborts.
 
-**Narrow TOCTOU window:** Between the `lstat` check and the subsequent `fs.rm` + `git clone`, an attacker with filesystem access could theoretically replace the directory with a symlink. This window is narrow (sub-millisecond under normal conditions) and requires a concurrent local race. The mitigation addresses the common case of a pre-existing symlink but does not guarantee atomicity against a determined local attacker with write access to `/tmp`.
+**Narrow TOCTOU window:** Between the `lstat` check and the subsequent `fs.rm` + `git clone`, an attacker with filesystem access could theoretically replace the directory with a symlink. This window is narrow (sub-millisecond under normal conditions) and requires a concurrent local race. The mitigation addresses the common case of a pre-existing symlink but does not guarantee atomicity against a determined local attacker with write access to the temp directory (`os.tmpdir()`).
 
 ---
 
@@ -231,23 +249,33 @@ const args: string[] = ["--mode", "json", "-p", "--no-session"];
 
 This ensures the subagent runs in a disposable session with no access to the user's conversation history, project state, or prior tool results.
 
-### `shell: false`
+### Platform-Dependent Shell Invocation
 
-The subprocess is spawned with `shell: false`:
+The subprocess spawn behavior depends on the platform, determined by `getPiInvocation()` in [`src/subagent.ts`](../src/subagent.ts):
+
+- **Unix (Linux, macOS):** `shell: false` — the command and each argument are passed directly to `execve()`, eliminating shell injection even if an argument contained special characters.
+- **Windows:** `shell: true` — required to resolve `.cmd` wrapper scripts (e.g., `pi.cmd`). Without `shell: true`, Windows cannot find and execute `.cmd` files via `child_process.spawn`.
+
+When `shell: true` is used on Windows, Node.js automatically shell-escapes array arguments by wrapping them in double quotes. This prevents `cmd.exe` from interpreting special characters (e.g., `&`, `|`, `>`) in the task prompt:
 
 ```ts
 const proc = spawn(invocation.command, invocation.args, {
   cwd,
-  shell: false,
+  shell: invocation.useShell, // false on Unix, true on Windows
   stdio: ["ignore", "pipe", "pipe"],
 });
 ```
 
-This prevents shell interpretation of arguments — the command and each argument are passed directly to `execve()`, eliminating shell injection even if an argument contained special characters.
+This is safe because arguments are passed as an **array** (not a concatenated string), ensuring each argument is individually quoted by Node.js.
 
 ### Abort Handling
 
-If the parent `AbortSignal` fires, the subprocess receives `SIGTERM` followed by `SIGKILL` after a 5-second grace period (`SIGKILL_DELAY_MS`). This prevents orphaned subagent processes from continuing to consume resources.
+If the parent `AbortSignal` fires, the subprocess is terminated with platform-appropriate behavior:
+
+- **Unix (Linux, macOS):** `SIGTERM` is sent first for graceful shutdown. If the process does not exit within 5 seconds (`SIGKILL_DELAY_MS`), it escalates to `SIGKILL`.
+- **Windows:** `proc.kill()` is called directly. Windows does not support Unix-style signals, so `proc.kill()` forcefully terminates the process — no signal escalation is needed.
+
+This prevents orphaned subagent processes from continuing to consume resources.
 
 ---
 
@@ -300,12 +328,12 @@ This catches any HTTPS URL with embedded credentials that may have reached this 
 |---|---|---|
 | SSRF (HTTP) | `validateUrlForSsrf()` — static blocklist + DNS check | Manual redirect loop with `validateRedirectForSsrf()` |
 | SSRF (SSH) | `isBlockedHostname()` + `isBlockedByDns()` on SSH hostname | `sanitizeGitUrl()` allowlist limits hostname characters |
-| Command injection | `sanitizeGitUrl()` — 7-step sanitization + allowlist | `shell: false` in all subprocess spawns |
+| Command injection | `sanitizeGitUrl()` — 7-step sanitization + allowlist | `shell: false` (Unix) / auto-quoted `shell: true` (Windows) in subprocess spawns |
 | DNS rebinding | `isBlockedByDns()` — resolve and check at fetch time | Static hostname blocklist catches common cases |
 | Redirect SSRF | `redirect: "manual"` + per-redirect SSRF validation | `MAX_REDIRECTS` cap (10) |
 | Path traversal | Owner/repo `..` and `.` check in `executeRepoFetch()` | `sanitizeGitUrl()` allowlist blocks `..` (not in allowed chars) |
 | Branch injection | Branch name validation (alphanumeric + `/._-`, max 256 chars, no `..~^:`, can't end with `.lock`/`.`/`) | `sanitizeGitUrl()` allowlist limits URL characters |
 | Content bombing | Streaming `readResponseWithSizeLimit()` at 10 MB | `FETCH_TIMEOUT_MS` (30 s) and `GIT_CLONE_TIMEOUT_MS` (120 s) |
-| Symlink attacks | `fs.lstat()` pre-clone symlink check | Clone target is always under `/tmp/repository-{owner}/` |
+| Symlink attacks | `fs.lstat()` pre-clone symlink check | Clone target is always under `os.tmpdir()/repository-{owner}/` |
 | Credential leakage | `stripCredentials()` + `sanitizeGitUrl()` via URL API | `--no-session` prevents subagent from seeing prior context |
 | Git error leakage | Clone errors sanitized to exit code only (no raw stderr) | Partial clone directory cleaned up on failure |

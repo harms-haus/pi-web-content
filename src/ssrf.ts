@@ -161,24 +161,31 @@ function isPrivateIPv6(ip: string): boolean {
  * Returns true if ANY resolved IP is internal.
  */
 export async function isBlockedByDns(hostname: string): Promise<boolean> {
-  // Check IPv4 addresses
-  try {
-    const ipv4Addresses = await resolve4(hostname);
-    for (const ip of ipv4Addresses) {
+  const [ipv4Result, ipv6Result] = await Promise.allSettled([
+    resolve4(hostname),
+    resolve6(hostname),
+  ]);
+
+  let anyResolved = false;
+
+  if (ipv4Result.status === "fulfilled") {
+    anyResolved = true;
+    for (const ip of ipv4Result.value) {
       if (isPrivateIPv4(ip)) return true;
     }
-  } catch {
-    // DNS resolution failed — not a sign of safety, but we continue to IPv6
   }
 
-  // Check IPv6 addresses
-  try {
-    const ipv6Addresses = await resolve6(hostname);
-    for (const ip of ipv6Addresses) {
+  if (ipv6Result.status === "fulfilled") {
+    anyResolved = true;
+    for (const ip of ipv6Result.value) {
       if (isPrivateIPv6(ip)) return true;
     }
-  } catch {
-    // DNS resolution failed — continue
+  }
+
+  if (!anyResolved) {
+    throw new Error(
+      `Blocked: could not resolve hostname "${hostname}" via DNS (resolution failed for both IPv4 and IPv6).`,
+    );
   }
 
   return false;

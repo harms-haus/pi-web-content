@@ -28,18 +28,18 @@ interface SubagentResult {
 /**
  * Determine how to invoke pi (handles bundled executables vs node vs global pi)
  */
-function getPiInvocation(args: string[]): { command: string; args: string[] } {
+function getPiInvocation(args: string[]): { command: string; args: string[]; useShell: boolean } {
   const currentScript = process.argv[1];
   const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
   if (currentScript && !isBunVirtualScript && fs.existsSync(currentScript)) {
-    return { command: process.execPath, args: [currentScript, ...args] };
+    return { command: process.execPath, args: [currentScript, ...args], useShell: false };
   }
   const execName = path.basename(process.execPath).toLowerCase();
   const isGenericRuntime = /^(node|bun)(\.exe)?$/.test(execName);
   if (!isGenericRuntime) {
-    return { command: process.execPath, args };
+    return { command: process.execPath, args, useShell: false };
   }
-  return { command: "pi", args };
+  return { command: "pi", args, useShell: process.platform === "win32" };
 }
 
 /**
@@ -83,7 +83,11 @@ export async function runSubagent(
     const invocation = getPiInvocation(args);
     const proc = spawn(invocation.command, invocation.args, {
       cwd,
-      shell: false,
+      shell: invocation.useShell,
+      // Security: When shell: true on Windows, Node.js automatically shell-escapes
+      // array arguments (wraps them in double quotes), preventing cmd.exe from
+      // interpreting special characters (e.g. &, |, >) in the task prompt.
+      // This is safe because we pass args as an array, not a concatenated string.
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -93,9 +97,9 @@ export async function runSubagent(
       if (!line.trim()) return;
       let event: SubagentEvent;
       try {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        event = JSON.parse(line);
+        event = JSON.parse(line) as SubagentEvent;
       } catch {
+        // Skip malformed JSON lines from the subagent (e.g., partial output, log interleaving).
         return;
       }
       if (event.type === "message_end" && event.message) {
@@ -143,10 +147,17 @@ export async function runSubagent(
     if (signal) {
       const killProc = () => {
         wasAborted = true;
-        proc.kill("SIGTERM");
-        setTimeout(() => {
-          if (!proc.killed) proc.kill("SIGKILL");
-        }, SIGKILL_DELAY_MS);
+        if (process.platform === "win32") {
+          // Windows: signals don't work as on Unix. proc.kill() forcefully
+          // terminates the process. No SIGKILL fallback needed.
+          proc.kill();
+        } else {
+          // Unix: try graceful SIGTERM, escalate to SIGKILL after delay
+          proc.kill("SIGTERM");
+          setTimeout(() => {
+            if (!proc.killed) proc.kill("SIGKILL");
+          }, SIGKILL_DELAY_MS);
+        }
       };
       if (signal.aborted) {
         killProc();

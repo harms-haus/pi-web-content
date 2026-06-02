@@ -15,7 +15,8 @@ import type {
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { isRepoUrl } from "./detect-repo-url.js";
-import { executeRepoFetch, type FetchContentDetails } from "./execute-repo-fetch.js";
+import { executeRepoFetch } from "./execute-repo-fetch.js";
+import type { FetchContentDetails } from "./types.js";
 import { executeWebFetch } from "./execute-web-fetch.js";
 import { renderToolCall, renderToolResult } from "./tool-renderers.js";
 
@@ -106,7 +107,7 @@ export function createFetchContentTool(pi: ExtensionAPI) {
       if (details?.type === "repo") {
         const text = renderToolResult(
           result,
-          details as unknown as Record<string, unknown>,
+          details,
           { isPartial },
           theme,
           {
@@ -123,7 +124,7 @@ export function createFetchContentTool(pi: ExtensionAPI) {
       // Web result (default)
       const text = renderToolResult(
         result,
-        details as unknown as Record<string, unknown>,
+        details,
         { isPartial },
         theme,
         {

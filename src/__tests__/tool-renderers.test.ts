@@ -1,5 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
+import type { FetchContentDetails } from "../types.js";
 import { renderToolCall, renderToolResult, truncateForDisplay } from "../tool-renderers.js";
 
 /**
@@ -76,36 +78,36 @@ describe("renderToolResult", () => {
   const theme = createMockTheme();
 
   it("shows ✓ for success", () => {
-    const result = renderToolResult({}, {}, { isPartial: false }, theme);
+    const result = renderToolResult({}, {} as FetchContentDetails, { isPartial: false }, theme);
     expect(result).toContain("✓");
   });
 
   it("shows ✗ for error", () => {
-    const result = renderToolResult({ isError: true }, {}, { isPartial: false }, theme);
+    const result = renderToolResult({ isError: true }, {} as FetchContentDetails, { isPartial: false }, theme);
     expect(result).toContain("✗");
   });
 
   it("shows 'Processing...' for partial", () => {
-    const result = renderToolResult({}, {}, { isPartial: true }, theme);
+    const result = renderToolResult({}, {} as FetchContentDetails, { isPartial: true }, theme);
     expect(result).toContain("Processing...");
   });
 
   it("shows URL in accent color", () => {
-    const result = renderToolResult({}, {}, { isPartial: false }, theme, {
+    const result = renderToolResult({}, {} as FetchContentDetails, { isPartial: false }, theme, {
       showUrl: "https://example.com",
     });
     expect(result).toContain("https://example.com");
   });
 
   it("shows owner/repo in accent color", () => {
-    const result = renderToolResult({}, {}, { isPartial: false }, theme, {
+    const result = renderToolResult({}, {} as FetchContentDetails, { isPartial: false }, theme, {
       showOwnerRepo: { owner: "myorg", repo: "myrepo" },
     });
     expect(result).toContain("myorg/myrepo");
   });
 
   it("shows status badges (truncated, summarized)", () => {
-    const result = renderToolResult({}, {}, { isPartial: false }, theme, {
+    const result = renderToolResult({}, {} as FetchContentDetails, { isPartial: false }, theme, {
       showTruncated: true,
       showSummarized: true,
     });
@@ -114,21 +116,21 @@ describe("renderToolResult", () => {
   });
 
   it("shows title from details", () => {
-    const result = renderToolResult({}, { title: "My Page Title" }, { isPartial: false }, theme);
+    const result = renderToolResult({}, { title: "My Page Title" } as FetchContentDetails, { isPartial: false }, theme);
     expect(result).toContain("My Page Title");
   });
 
   it("shows content length", () => {
-    const result = renderToolResult({}, {}, { isPartial: false }, theme, {
+    const result = renderToolResult({}, {} as FetchContentDetails, { isPartial: false }, theme, {
       showContentLength: 1024,
     });
     expect(result).toContain("1.0KB");
   });
 
   it("shows target path", () => {
-    const result = renderToolResult({}, {}, { isPartial: false }, theme, {
-      showTargetPath: "/tmp/repo",
+    const result = renderToolResult({}, {} as FetchContentDetails, { isPartial: false }, theme, {
+      showTargetPath: `${tmpdir()}/repo`,
     });
-    expect(result).toContain("/tmp/repo");
+    expect(result).toContain(`${tmpdir()}/repo`);
   });
 });

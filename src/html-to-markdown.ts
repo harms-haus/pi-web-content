@@ -19,17 +19,6 @@ const turndownService = new TurndownService({
 turndownService.use(gfm);
 turndownService.remove(["script", "style", "iframe", "noscript"]);
 
-export const BINARY_TYPES = [
-  "image/",
-  "video/",
-  "audio/",
-  "application/pdf",
-  "application/zip",
-  "application/octet-stream",
-  "application/x-gzip",
-  "application/x-tar",
-];
-
 interface HtmlToMarkdownResult {
   title: string;
   markdown: string;

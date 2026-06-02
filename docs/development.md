@@ -4,7 +4,7 @@
 
 | Requirement | Version | Purpose |
 |-------------|---------|---------|
-| Node.js | 20+ | Runtime for the pi agent and extension loading |
+| Node.js | 22+ | Runtime for the pi agent and extension loading |
 | npm | bundled with Node | Package management |
 | git | any | Required for repository URL functionality |
 | pi coding agent | latest | Host runtime that loads the extension |
@@ -20,15 +20,6 @@ npm install
 No build step is required. The extension is loaded directly from `src/index.ts` via the `"pi.extensions"` field in `package.json`, with TypeScript compiled on the fly by the pi runtime.
 
 ## Development Workflow
-
-### No Build Step
-
-```bash
-npm run build
-# Output: nothing to build
-```
-
-TypeScript is loaded directly by the pi runtime. The `build` script is a placeholder that echoes `nothing to build`.
 
 ### Type Checking
 
@@ -86,8 +77,8 @@ Run this before committing to ensure type safety, lint compliance, and test corr
 
 The project uses two GitHub Actions workflows:
 
-- **`.github/workflows/ci.yml`** — Runs on every push and PR to `main`. Uses a Node.js 20 + 22 matrix and executes type checking, linting, format checking, and tests.
-- **`.github/workflows/publish.yml`** — Runs on tag pushes (`v*`). Executes `npm publish --dry-run` to validate that the package can be published without actually publishing it.
+- **`.github/workflows/ci.yml`** — Runs on every push and PR to `main`. Uses a matrix of `os: [ubuntu-latest, windows-latest]` × `node-version: [22, 24]` and executes type checking, linting, format checking, and coverage tests.
+- **`.github/workflows/publish.yml`** — Triggers on `release: types: [published]`. Runs `npm publish --access public` to publish the package to npm.
 
 ## Project Configuration
 
@@ -97,30 +88,36 @@ The project uses two GitHub Actions workflows:
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "outDir": "dist",
-    "rootDir": "src",
-    "declaration": true,
-    "sourceMap": true
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/**/*"],
+  "exclude": ["node_modules"]
 }
 ```
 
 | Setting | Value | Effect |
 |---------|-------|--------|
-| `target` | `ES2022` | Generates code for modern Node.js (20+) — supports top-level `await`, `.at()`, `Object.hasOwn`, etc. |
-| `module` / `moduleResolution` | `NodeNext` | ESM with Node.js resolution rules (`.js` extensions required in imports) |
+| `target` | `ES2022` | Generates code for modern Node.js (22+) — supports top-level `await`, `.at()`, `Object.hasOwn`, etc. |
+| `module` / `moduleResolution` | `ESNext` / `bundler` | ESM output with bundler-style resolution, designed for tools like esbuild and Vite that compile TypeScript on the fly |
 | `strict` | `true` | Enables all strict type checks (`noImplicitAny`, `strictNullChecks`, etc.) |
 | `noEmit` | `true` | No `.js` output — files are consumed directly by the pi runtime |
 | `esModuleInterop` | `true` | Allows default imports from CommonJS modules (`import TurndownService from "turndown"`) |
 | `skipLibCheck` | `true` | Skips type checking of `.d.ts` files in `node_modules` |
+| `noUnusedLocals` | `true` | Errors on declared but unused local variables |
+| `noUnusedParameters` | `true` | Errors on unused function parameters |
+| `noImplicitReturns` | `true` | Errors when a code path doesn't explicitly return a value |
+| `noFallthroughCasesInSwitch` | `true` | Errors on switch cases that fall through without `break` |
+| `noUncheckedIndexedAccess` | `true` | Index access returns `T | undefined` (e.g., `arr[0]` is not assumed to exist) |
 
 ### vitest.config.ts
 
@@ -129,7 +126,6 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    globals: true,
     include: ['src/**/*.test.ts'],
     coverage: {
       provider: 'v8',
@@ -141,15 +137,23 @@ export default defineConfig({
         lines: 90,
       },
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.test.ts', 'src/types/**'],
+      exclude: [
+        'src/__tests__/**',
+        'src/**/*.test.ts',
+        'src/**/setup.ts',
+        'src/**/helpers/**',
+        'src/**/*.d.ts',
+        'src/types.ts',
+        'src/types/**',
+      ],
     },
   },
 });
 ```
 
-- **`globals: true`** — Vitest globals (`describe`, `it`, `expect`, `vi`, `beforeEach`, etc.) are available without explicit imports (though many tests import them explicitly for clarity).
 - **`include`** — Matches `src/**/*.test.ts`, enforcing a 1:1 source-to-test mapping convention.
-- **`coverage`** — Uses the v8 provider, reports to terminal (`text`) and LCOV (`lcov`). Enforces 90% thresholds on statements, branches, functions, and lines. Test files and `src/types/**` are excluded from coverage.
+- **`coverage`** — Uses the v8 provider, reports to terminal (`text`) and LCOV (`lcov`). Enforces 90% thresholds on statements, branches, functions, and lines. Test files, type definitions, setup files, and helpers are excluded from coverage.
+- **Imports** — Tests explicitly import from `'vitest'` (e.g., `import { describe, it, expect, vi } from 'vitest'`) rather than relying on global scope.
 
 ### eslint.config.js
 
@@ -167,7 +171,7 @@ Each source module has a corresponding test file under `src/__tests__/`:
 
 | Source | Test |
 |--------|------|
-| `fetch-content.ts` | `fetch-content.test.ts` |
+| `fetch-content.ts` | `fetch-content.web.test.ts` + `fetch-content.repo.test.ts` |
 | `detect-repo-url.ts` | `detect-repo-url.test.ts` |
 | `ssrf.ts` | `ssrf.test.ts` |
 | `subagent.ts` | `subagent.test.ts` |
@@ -175,11 +179,13 @@ Each source module has a corresponding test file under `src/__tests__/`:
 | `summarize.ts` | `summarize.test.ts` |
 | `parse-repo-url.ts` | `parse-repo-url.test.ts` |
 | `tool-renderers.ts` | `tool-renderers.test.ts` |
-| `fetch-constants.ts` | — (tested via integration in `fetch-content.test.ts`) |
+| `fetch-constants.ts` | `fetch-constants.test.ts` |
 | `sanitize-git-url.ts` | `sanitize-git-url.test.ts` |
-| `execute-repo-fetch.ts` | — (tested via `fetch-content.test.ts`) |
-| `execute-web-fetch.ts` | — (tested via `fetch-content.test.ts`) |
+| `execute-repo-fetch.ts` | `execute-repo-fetch.test.ts` |
+| `execute-web-fetch.ts` | `execute-web-fetch.test.ts` |
 | `index.ts` | `index.test.ts` |
+
+**Total: 15 test files, ~477 tests.**
 
 ### Mock Ordering
 
@@ -218,7 +224,7 @@ vi.mock("node:child_process", () => ({
 
 Tests define local factory functions for creating test fixtures:
 
-- **`createMockResponse()`** (fetch-content.test.ts) — Constructs a `Response` object with configurable `status`, `statusText`, `url`, `contentType`, `body`, and `headers`. Encodes the body into a `ReadableStream`.
+- **`createMockResponse()`** (`fetch-content.web.test.ts`) — Constructs a `Response` object with configurable `status`, `statusText`, `url`, `contentType`, `body`, and `headers`. Encodes the body into a `ReadableStream`.
 - **`createMockProcess()`** (subagent.test.ts) — Constructs an EventEmitter-based mock of a `child_process.spawn` return value, with `stdout`, `stderr`, `kill`, and `killed` properties.
 - **`createMockTheme()`** (tool-renderers.test.ts) — A mock `Theme` object with `fg` and `bold` passthrough functions, used in render tests.
 - **`createAssistantMessage()`** (subagent.test.ts) — Creates a `Message` object with the shape expected by the NDJSON parser.
@@ -246,7 +252,8 @@ beforeEach(() => {
 - `tool-renderers.ts` — Pure string formatting with theme mocks.
 
 **Heavy-mock integration modules** (extensive mocking):
-- `fetch-content.ts` — Mocks `ssrf`, `html-to-markdown`, `summarize`, `tool-renderers`, `detect-repo-url`, `parse-repo-url`, `node:fs/promises`, and stubs `fetch` globally. Tests the full routing logic (web vs. repo), SSRF validation, content-type routing, size limits, redirect handling, and abort signals.
+- `fetch-content.web.test.ts` — Mocks `ssrf`, `html-to-markdown`, `summarize`, `tool-renderers`, `execute-web-fetch`, `detect-repo-url`, `parse-repo-url`, `node:fs/promises`, and stubs `fetch` globally. Tests web fetch routing, SSRF validation, content-type routing, size limits, redirect handling, and abort signals.
+- `fetch-content.repo.test.ts` — Mocks `ssrf`, `execute-repo-fetch`, `detect-repo-url`, `parse-repo-url`, and `sanitize-git-url`. Tests repository URL detection, routing to repo fetch, and result rendering.
 - `subagent.ts` — Mocks `node:child_process` and `node:fs`. Tests NDJSON parsing, chunked data handling, abort/kill sequences (with fake timers), stderr capping, and exit code behavior.
 
 ### Parameterized Tests with `it.each()`
@@ -292,7 +299,7 @@ This pattern tests chunked delivery, missing trailing newlines, invalid JSON lin
 
 To add support for a new response content type (e.g., `text/xml`):
 
-1. **Define the routing logic in `fetch-content.ts`** — Inside `createFetchContentTool()`, locate the content-type routing section in the `execute` method (after the binary content rejection check). Add a new branch:
+1. **Define the routing logic in `execute-web-fetch.ts`** — Locate the content-type routing section in `executeWebFetch()` (after the binary content rejection check). Add a new branch:
 
    ```ts
    if (contentType.includes("application/xml")) {
@@ -301,7 +308,7 @@ To add support for a new response content type (e.g., `text/xml`):
    }
    ```
 
-2. **Add a test in `fetch-content.test.ts`** — Under the `content-type routing` describe block:
+2. **Add a test in `execute-web-fetch.test.ts`** — Under the `content-type routing` describe block:
 
    ```ts
    it("handles XML responses", async () => {
@@ -374,6 +381,16 @@ To add support for a new git hosting platform (e.g., `gogs.example.com`):
 4. **Verify `parseRepoUrl()` handles the URL format** — The existing regex patterns in `parse-repo-url.ts` handle generic `https://host/owner/repo` URLs, so no changes are needed for standard paths. Test with a `parse-repo-url.test.ts` entry if the URL format is unusual.
 
 5. **Run all checks**: `npm run typecheck && npm run lint && npm run test`
+
+## Windows Development Notes
+
+The codebase is cross-platform and tested on both Linux and Windows via CI. Key Windows-compatible patterns:
+
+- **Temporary files**: All temp file paths use `os.tmpdir()` (not hardcoded `/tmp`). Repository clones go to `path.join(tmpdir(), "repository-{owner}", repo)` in `execute-repo-fetch.ts`, and web fetch output uses `fs.mkdtemp(path.join(tmpdir(), "pi-fetch-"))` in `execute-web-fetch.ts`.
+- **Path construction**: All paths are built with `path.join()` rather than string concatenation with `/`, ensuring correct separators on both platforms.
+- **Subagent spawn**: When the `pi` command is resolved via PATH lookup on Windows (`process.platform === "win32"`), `shell: true` is set on `child_process.spawn()`. This is required because Windows cannot execute shebang scripts directly. Arguments are passed as an array so Node.js shell-escapes each one individually, preventing cmd.exe from interpreting special characters.
+- **Test temp paths**: Tests reference `path.join(tmpdir(), ...)` to match production paths, avoiding platform-specific assertions.
+- **Line ending normalization**: The `.gitattributes` file enforces LF line endings for `.ts`, `.js`, `.json`, `.md`, `.yml`, and `.yaml` files (`* text=auto` with per-extension `eol=lf` rules), ensuring consistent behavior across platforms.
 
 ## Code Style Conventions
 

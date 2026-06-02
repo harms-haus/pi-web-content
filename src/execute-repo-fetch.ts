@@ -11,29 +11,8 @@ import { GIT_CLONE_TIMEOUT_MS } from "./fetch-constants.js";
 import { parseRepoUrl } from "./parse-repo-url.js";
 import { sanitizeGitUrl } from "./sanitize-git-url.js";
 import { isBlockedByDns, isBlockedHostname, validateUrlForSsrf } from "./ssrf.js";
+import type { FetchContentDetails, SummarizeUpdate } from "./types.js";
 import { summarizeWithSubagent } from "./summarize.js";
-
-/** Structured details returned by fetch_content tool */
-export interface FetchContentDetails {
-  url?: string;
-  title?: string;
-  summarized?: boolean;
-  summarizePrompt?: string;
-  contentLength?: number;
-  truncated?: boolean;
-  fullOutputPath?: string;
-  status?: string;
-  /** Whether this was a web fetch or git repo clone */
-  type: "web" | "repo";
-  /** Repo owner (only for type=repo) */
-  owner?: string;
-  /** Repo name (only for type=repo) */
-  repo?: string;
-  /** Local path to cloned repo (only for type=repo) */
-  targetPath?: string;
-  /** Git branch that was cloned (only for type=repo) */
-  branch?: string;
-}
 
 /** Execute the git clone flow for a detected repository URL. */
 // eslint-disable-next-line max-lines-per-function, complexity
@@ -86,6 +65,14 @@ export async function executeRepoFetch(
     throw new Error("Invalid repository owner or name in URL.");
   }
 
+  // Windows reserved device name protection (applies on all platforms)
+  const WINDOWS_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i;
+  if (WINDOWS_RESERVED.test(owner) || WINDOWS_RESERVED.test(repo)) {
+    throw new Error(
+      `Invalid repository owner or name: reserved device name on Windows.`,
+    );
+  }
+
   const targetPath = path.join(tmpdir(), `repository-${owner}`, repo);
   // NOTE: Cloned repos persist at tmpdir()/repository-{owner}/{repo} and are never
   // automatically cleaned up. This is intentional — it allows the user or agent
@@ -107,8 +94,13 @@ export async function executeRepoFetch(
 
   try {
     await fs.rm(targetPath, { recursive: true, force: true });
-  } catch {
-    // Directory may not exist or may be partially created; safe to ignore
+  } catch (err: unknown) {
+    // With force: true, ENOENT is already suppressed.
+    // Only ignore ENOTEMPTY which can occur in race conditions.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOTEMPTY") {
+      throw err;
+    }
   }
 
   // Ensure parent directory exists
@@ -150,11 +142,16 @@ export async function executeRepoFetch(
     // Clean up partial clone
     try {
       await fs.rm(targetPath, { recursive: true, force: true });
-    } catch {
-      // Partial clone may be left in an inconsistent state; safe to ignore cleanup errors
+    } catch (err: unknown) {
+      // With force: true, ENOENT is already suppressed.
+      // Only ignore ENOTEMPTY which can occur in race conditions.
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ENOTEMPTY") {
+        throw err;
+      }
     }
     throw new Error(
-      `git clone failed for ${owner}/${repo}. ${result.code ? `Exit code: ${result.code}.` : "Unknown error."}`,
+      `git clone failed for ${owner}/${repo}. Exit code: ${result.code}.`,
     );
   }
 
@@ -173,12 +170,7 @@ export async function executeRepoFetch(
       url,
       cwd: targetPath,
       signal,
-      onUpdate: onUpdate as
-        | ((update: {
-            content: Array<{ type: string; text: string }>;
-            details: { status: string };
-          }) => void)
-        | undefined,
+      onUpdate: onUpdate as unknown as ((update: SummarizeUpdate) => void) | undefined,
     });
 
     return {

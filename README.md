@@ -10,7 +10,7 @@ Fetch a URL — either a web page or a git repository — and bring its content 
 
 **Web content** uses Mozilla Readability to strip navigation, ads, and sidebars, then Turndown to convert to GitHub Flavored Markdown.
 
-**Git repositories** are shallow-cloned (`--depth 1`) to `/tmp/repository-{owner}/{repo-name}` for exploration.
+**Git repositories** are shallow-cloned (`--depth 1`) to a platform-aware temp directory (`os.tmpdir()/repository-{owner}/{repo-name}`) for exploration.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -24,7 +24,7 @@ When `summarize` is provided, a pi subagent processes the full content with your
 **Example LLM usage:**
 - Web: "Read this article: https://example.com/blog/post" → full markdown
 - Web summary: "Summarize https://example.com/docs/api" → summarized
-- Repo: "Explore https://github.com/user/repo" → cloned to /tmp/repository-user/repo
+- Repo: "Explore https://github.com/user/repo" → cloned to a temp directory (e.g. `/tmp/repository-user/repo` on Linux/macOS, `%TEMP%\repository-user\repo` on Windows)
 - Repo summary: "Give me an overview of https://github.com/user/repo" → summarized analysis
 - Specific branch: "Explore https://github.com/user/repo" with branch="develop" → cloned develop branch
 
@@ -56,7 +56,9 @@ pi -e git:github.com/harms-haus/pi-web-content
 
 - [pi](https://pi.dev) coding agent
 - [git](https://git-scm.com) (for repository URLs)
-- Node.js 20+
+- Node.js 22+
+
+**Platform support:** Works on Linux, macOS, and Windows. CI runs on both `ubuntu-latest` and `windows-latest`.
 
 ## Security
 
@@ -68,6 +70,7 @@ This extension includes:
 - **Git error sanitization**: Raw stderr is never exposed to callers — only sanitized messages are returned
 - **Injection-resistant delimiters**: Uses unique tokens for content boundaries in subagent prompts
 - **URL scheme validation**: Only HTTPS and SSH URLs for git clone; only HTTP(S) for web fetch
+- **Platform-agnostic User-Agent**: Uses a standard Chrome UA string that avoids OS-specific fingerprinting in web requests
 
 ## Architecture
 
@@ -75,7 +78,8 @@ This extension includes:
 src/
 ├── index.ts              # Extension entry point
 ├── fetch-content.ts      # Tool router: dispatches to web/repo executors
-├── fetch-constants.ts    # Configurable constants (timeouts, limits, headers)
+├── fetch-constants.ts    # Configurable constants (timeouts, limits, headers, BINARY_TYPES)
+├── types.ts              # Shared types (FetchContentDetails, SummarizeUpdate)
 ├── execute-web-fetch.ts  # Web fetch flow with redirect and content-type handling
 ├── execute-repo-fetch.ts # Git clone flow and repo content handling
 ├── sanitize-git-url.ts   # Git URL sanitization for command injection prevention
@@ -85,7 +89,9 @@ src/
 ├── summarize.ts          # Shared summarization helper
 ├── ssrf.ts               # SSRF protection
 ├── html-to-markdown.ts   # HTML to Markdown conversion
-└── tool-renderers.ts     # Shared TUI rendering helpers
+├── tool-renderers.ts     # Shared TUI rendering helpers
+└── types/
+    └── turndown-plugin-gfm.d.ts  # Type declarations for turndown-plugin-gfm
 ```
 
 Dependencies:

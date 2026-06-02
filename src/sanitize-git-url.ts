@@ -1,3 +1,5 @@
+import { stripCredentials } from "./detect-repo-url.js";
+
 /**
  * Sanitize and validate a git URL against command injection.
  * Strips embedded credentials and rejects dangerous patterns.
@@ -36,7 +38,7 @@ export function sanitizeGitUrl(url: string): string {
 
   // 5. Strict character allowlist:
   //    alphanumeric, -, _, ., /, :, @, #, ?, =, &
-  const allowedChars = /^[a-zA-Z0-9\-_./:@#?=&]+$/;
+  const allowedChars = /^[a-zA-Z0-9\-_./:@#?=&%]+$/;
   if (!allowedChars.test(url)) {
     throw new Error("Invalid repository URL: contains disallowed characters.");
   }
@@ -45,13 +47,13 @@ export function sanitizeGitUrl(url: string): string {
   //    https://user:pass@github.com/org/repo → https://github.com/org/repo
   try {
     const parsed = new URL(url);
-    if (parsed.username || parsed.password) {
-      parsed.username = "";
-      parsed.password = "";
-      return parsed.toString();
+    const stripped = stripCredentials(parsed);
+    if (stripped !== parsed.toString()) {
+      return stripped;
     }
   } catch {
-    // Not a URL-parseable string (e.g., SSH URL); fall through
+    // URL constructor cannot parse this string (e.g., SSH URL like git@host:owner/repo).
+    // Fall through to return the original url string unchanged.
   }
 
   return url;

@@ -5,6 +5,7 @@
  * fetch-content.ts and fetch-repo.ts.
  */
 
+import type { FetchContentDetails } from "./types.js";
 import { formatSize, type Theme } from "@earendil-works/pi-coding-agent";
 
 /**
@@ -63,7 +64,7 @@ interface RenderToolResultOptions {
 // eslint-disable-next-line complexity -- multi-branch content rendering for repo/web/summarize/binary
 export function renderToolResult(
   result: { isError?: boolean },
-  details: Record<string, unknown>,
+  details: FetchContentDetails | undefined,
   { isPartial }: { isPartial?: boolean },
   theme: Theme,
   options?: RenderToolResultOptions,
@@ -85,9 +86,7 @@ export function renderToolResult(
   }
 
   // Title from details (used by fetch_content)
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- details?.title may be undefined in early streaming updates
   if (details?.title) {
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string, @typescript-eslint/restrict-template-expressions -- details fields are dynamically typed from streaming updates
     text += ` ${theme.fg("dim", `— ${details.title}`)}`;
   }
 

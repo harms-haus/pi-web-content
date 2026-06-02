@@ -10,17 +10,18 @@ pi-web-content is a [pi](https://github.com/earendil-works/pi) extension that re
 |--------|------|----------------|-------------|----------------------|
 | **Entry point** | `src/index.ts` | Extension registration with pi host | `default` (extension factory) | `fetch-content.ts` |
 | **fetch_content tool** | `src/fetch-content.ts` | Thin orchestrator: tool definition, URL scheme validation, repo detection, routing to `execute-repo-fetch` or `execute-web-fetch`, TUI renderers | `createFetchContentTool(pi)` | `detect-repo-url.ts`, `execute-repo-fetch.ts`, `execute-web-fetch.ts`, `tool-renderers.ts` |
-| **Web fetch executor** | `src/execute-web-fetch.ts` | Full web fetch pipeline: SSRF validation, HTTP fetch with manual redirects, binary rejection, body read with size limit, content-type routing, HTML→Markdown conversion, summarization, truncation | `executeWebFetch(params, signal, onUpdate, ctx)` | `fetch-constants.ts`, `ssrf.ts`, `html-to-markdown.ts`, `summarize.ts`, `execute-repo-fetch.ts` _(type import)_ |
-| **Repo fetch executor** | `src/execute-repo-fetch.ts` | Git clone pipeline: SSRF validation (HTTPS + SSH), URL sanitization, owner/repo parsing, branch validation, git clone with timeout, summarization | `executeRepoFetch(pi, params, repoResult, signal, onUpdate, ctx)`, `FetchContentDetails` | `fetch-constants.ts`, `sanitize-git-url.ts`, `ssrf.ts`, `parse-repo-url.ts`, `summarize.ts` |
-| **Fetch constants** | `src/fetch-constants.ts` | All timeout, size limit, and HTTP header constants | `FETCH_TIMEOUT_MS`, `GIT_CLONE_TIMEOUT_MS`, `MAX_RESPONSE_BYTES`, `MAX_REDIRECTS`, `USER_AGENT`, `ACCEPT_HEADER`, `ACCEPT_LANGUAGE` | — |
+| **Web fetch executor** | `src/execute-web-fetch.ts` | Full web fetch pipeline: SSRF validation, HTTP fetch with manual redirects, binary rejection, body read with size limit, content-type routing, HTML→Markdown conversion, summarization, truncation | `executeWebFetch(params, signal, onUpdate, ctx)` | `fetch-constants.ts`, `ssrf.ts`, `html-to-markdown.ts`, `summarize.ts`, `types.ts` |
+| **Repo fetch executor** | `src/execute-repo-fetch.ts` | Git clone pipeline: SSRF validation (HTTPS + SSH), URL sanitization, owner/repo parsing, branch validation, git clone with timeout, summarization | `executeRepoFetch(pi, params, repoResult, signal, onUpdate, ctx)` | `fetch-constants.ts`, `sanitize-git-url.ts`, `ssrf.ts`, `parse-repo-url.ts`, `summarize.ts`, `types.ts` |
+| **Fetch constants** | `src/fetch-constants.ts` | All timeout, size limit, HTTP header constants, and binary type detection list | `FETCH_TIMEOUT_MS`, `GIT_CLONE_TIMEOUT_MS`, `MAX_RESPONSE_BYTES`, `MAX_REDIRECTS`, `USER_AGENT`, `ACCEPT_HEADER`, `ACCEPT_LANGUAGE`, `BINARY_TYPES` | — |
 | **Git URL sanitizer** | `src/sanitize-git-url.ts` | Git URL sanitization against command injection: length, whitespace, protocol injection, shell metacharacters, character allowlist, credential stripping | `sanitizeGitUrl(url)` | — |
-| **URL detector** | `src/detect-repo-url.ts` | Classifies a URL as git repo vs. web page via hostname/path heuristics | `isRepoUrl(url)`, `RepoUrlResult`, `stripCredentials(url)` _(internal, not exported)_ | — |
+| **URL detector** | `src/detect-repo-url.ts` | Classifies a URL as git repo vs. web page via hostname/path heuristics | `isRepoUrl(url)`, `RepoUrlResult`, `stripCredentials(url)` (also imported by `sanitize-git-url.ts`) | — |
 | **URL parser** | `src/parse-repo-url.ts` | Extracts `owner`/`repo` from SSH, HTTPS, and generic git URLs | `parseRepoUrl(url)`, `RepoInfo` | — |
 | **SSRF guard** | `src/ssrf.ts` | Validates URLs against SSRF: static hostname blocklist, DNS resolution, IP range checks, redirect validation | `validateUrlForSsrf(url)`, `validateRedirectForSsrf(from, to)`, `isBlockedHostname(hostname)`, `isBlockedByDns(hostname)` | — |
-| **HTML→Markdown** | `src/html-to-markdown.ts` | Strips boilerplate via Readability (lazy-loaded), converts HTML to Markdown via Turndown + GFM | `htmlToMarkdown(html, url)` _(async)_, `BINARY_TYPES`, `HtmlToMarkdownResult` | — |
-| **Summarizer** | `src/summarize.ts` | Constructs subagent prompt with UUID-bounded content delimiter, delegates to subagent | `summarizeWithSubagent(options)`, `SummarizeOptions` | `subagent.ts` |
+| **HTML→Markdown** | `src/html-to-markdown.ts` | Strips boilerplate via Readability (lazy-loaded), converts HTML to Markdown via Turndown + GFM | `htmlToMarkdown(html, url)` _(async)_, `HtmlToMarkdownResult` | — |
+| **Summarizer** | `src/summarize.ts` | Constructs subagent prompt with UUID-bounded content delimiter, delegates to subagent | `summarizeWithSubagent(options)` | `subagent.ts`, `types.ts` |
+| **Shared types** | `src/types.ts` | Shared type definitions for tool result details and streaming updates | `FetchContentDetails`, `SummarizeUpdate` | — |
 | **Subagent runner** | `src/subagent.ts` | Spawns pi as a subprocess in `--mode json`, parses NDJSON stdout, handles abort (SIGTERM→SIGKILL) | `runSubagent(task, cwd, signal)`, `SubagentResult` | — |
-| **TUI renderers** | `src/tool-renderers.ts` | Shared call/result text rendering for the pi TUI | `renderToolCall(toolName, args, theme)`, `renderToolResult(result, details, {isPartial}, theme, options?)` | — |
+| **TUI renderers** | `src/tool-renderers.ts` | Shared call/result text rendering for the pi TUI | `renderToolCall(toolName, args, theme)`, `renderToolResult(result, details, {isPartial}, theme, options?)` | `types.ts` |
 
 ## URL Classification Constants
 
@@ -65,7 +66,7 @@ Executed in `execute-web-fetch.ts`. Triggered when `isRepoUrl(url)` returns `isR
 
 1. **Tool invocation** — `index.ts` registers the tool via `createFetchContentTool(pi)`. The pi host calls `execute(toolCallId, params, signal, onUpdate, ctx)`. After scheme validation and repo detection in `fetch-content.ts`, control is delegated to `executeWebFetch()`.
 
-2. **SSRF validation** — `validateUrlForSsrf(url)` ([ssrf.ts](../src/ssrf.ts)) checks scheme, static hostname blocklist, and DNS-resolved IPs. Throws `Blocked: …` on failure. See [docs/security.md](./security.md) for the full threat model.
+2. **SSRF validation** — `validateUrlForSsrf(url)` ([ssrf.ts](../src/ssrf.ts)) checks scheme, static hostname blocklist, and DNS-resolved IPs. DNS resolution uses `Promise.allSettled` to query IPv4 and IPv6 in parallel; if *both* fail the request is blocked (fail-closed). Throws `Blocked: …` on failure. See [docs/security.md](./security.md) for the full threat model.
 
 3. **Streaming: fetching** — An `onUpdate` callback fires `{ status: "fetching" }`.
 
@@ -90,13 +91,13 @@ Executed in `execute-web-fetch.ts`. Triggered when `isRepoUrl(url)` returns `isR
 
 10. **Optional summarization** — If `params.summarize` is set, the markdown is passed to `summarizeWithSubagent()`. See [Data Flow — Summarization](#data-flow--summarization).
 
-11. **Truncation** — If not summarized, the markdown is truncated via `truncateHead()` from `pi-coding-agent` using `DEFAULT_MAX_LINES` / `DEFAULT_MAX_BYTES`. If truncated, the full content is written to a temp file (`/tmp/pi-fetch-{random}/content.md`) and the path is returned in `details.fullOutputPath`.
+11. **Truncation** — If not summarized, the markdown is truncated via `truncateHead()` from `pi-coding-agent` using `DEFAULT_MAX_LINES` / `DEFAULT_MAX_BYTES`. If truncated, the full content is written to a temp file (`os.tmpdir()/pi-fetch-{random}/content.md`) and the path is returned in `details.fullOutputPath`.
 
 12. **Return** — The result includes the (possibly truncated) markdown with a header of `# {title}` and `**Source:** {finalUrl}`.
 
 ### FetchContentDetails Interface
 
-Defined in `execute-repo-fetch.ts` (re-exported for use by `fetch-content.ts`). The `details` object attached to every tool result:
+Defined in `src/types.ts`. The `details` object attached to every tool result:
 
 ```ts
 interface FetchContentDetails {
@@ -146,7 +147,7 @@ Executed in `execute-repo-fetch.ts`. Triggered when `isRepoUrl(url)` returns `is
    
    Invalid branch names throw an error with a descriptive message.
 
-6. **Target path construction** — `/tmp/repository-{owner}/{repo}`. Cloned repos persist intentionally for subsequent agent access.
+6. **Target path construction** — `os.tmpdir()/repository-{owner}/{repo}`. Cloned repos persist intentionally for subsequent agent access.
 
 7. **Symlink check** — `fs.lstat(targetPath)` verifies the target is not a symbolic link before proceeding (TOCTOU mitigation).
 
@@ -189,7 +190,7 @@ Used by both the web fetch and git clone paths when `params.summarize` is provid
    - If `process.execPath` is not `node` or `bun`, it is used directly as the command
    - Otherwise, invokes `pi` from PATH
    
-   The subprocess is spawned with `--mode json -p --no-session` and `stdio: ["ignore", "pipe", "pipe"]`.
+   The subprocess is spawned with `--mode json -p --no-session`, `stdio: ["ignore", "pipe", "pipe"]`, and `shell: invocation.useShell` (true on Windows so that `cmd.exe` is used and array arguments are automatically shell-escaped by Node.js).
 
 5. **NDJSON parsing** — The subprocess stdout is line-buffered. Each line is parsed as JSON. Events of type `"message_end"` and `"tool_result_end"` have their `message` field accumulated.
 
@@ -212,21 +213,25 @@ Used by both the web fetch and git clone paths when `params.summarize` is provid
 index.ts
 └── fetch-content.ts              (thin orchestrator + TUI renderers)
     ├── detect-repo-url.ts        (URL → repo vs web classification)
-    ├── execute-repo-fetch.ts     (git clone pipeline + FetchContentDetails)
+    ├── execute-repo-fetch.ts     (git clone pipeline)
     │   ├── fetch-constants.ts    (GIT_CLONE_TIMEOUT_MS)
     │   ├── sanitize-git-url.ts   (URL sanitization)
     │   ├── parse-repo-url.ts     (URL → { owner, repo })
     │   ├── ssrf.ts               (hostname blocklist + DNS checks)
-    │   └── summarize.ts          (subagent delegation)
-    │       └── subagent.ts       (subprocess spawn + NDJSON parsing)
+    │   ├── summarize.ts          (subagent delegation)
+    │   │   └── subagent.ts       (subprocess spawn + NDJSON parsing)
+    │   └── types.ts              (FetchContentDetails, SummarizeUpdate)
     ├── execute-web-fetch.ts      (web fetch pipeline)
-    │   ├── fetch-constants.ts    (timeouts, size limits, headers)
+    │   ├── fetch-constants.ts    (timeouts, size limits, headers, BINARY_TYPES)
     │   ├── ssrf.ts               (URL + redirect SSRF validation)
     │   ├── html-to-markdown.ts   (HTML → Markdown, dynamic imports for JSDOM/Readability)
     │   │   └── turndown-plugin-gfm (GFM markdown extensions)
-    │   └── summarize.ts          (subagent delegation)
-    │       └── subagent.ts       (subprocess spawn + NDJSON parsing)
-    └── tool-renderers.ts         (TUI call/result text rendering)
+    │   ├── summarize.ts          (subagent delegation)
+    │   │   └── subagent.ts       (subprocess spawn + NDJSON parsing)
+    │   └── types.ts              (FetchContentDetails, SummarizeUpdate)
+    ├── tool-renderers.ts         (TUI call/result text rendering)
+    │   └── types.ts              (FetchContentDetails)
+    └── types.ts                  (FetchContentDetails, SummarizeUpdate)
 ```
 
 **External runtime imports** (not shown above):
@@ -253,8 +258,10 @@ fetch-content.ts
 │   └── (AgentToolUpdateCallback, ExtensionAPI, ExtensionContext, Theme)
 ├── @earendil-works/pi-tui
 │   └── (Text)
-└── typebox
-    └── (Type)
+├── typebox
+│   └── (Type)
+└── types.ts
+    └── (FetchContentDetails)
 ```
 
 ## External Dependencies
@@ -315,11 +322,16 @@ pi-web-content/
     ├── summarize.ts             # Subagent summarization helper
     ├── subagent.ts              # Pi subprocess runner
     ├── tool-renderers.ts        # Shared TUI rendering
+    ├── types.ts                  # Shared types: FetchContentDetails, SummarizeUpdate
     ├── types/
     │   └── turndown-plugin-gfm.d.ts  # Type declarations for gfm plugin
     └── __tests__/
         ├── detect-repo-url.test.ts
-        ├── fetch-content.test.ts
+        ├── execute-repo-fetch.test.ts
+        ├── execute-web-fetch.test.ts
+        ├── fetch-constants.test.ts
+        ├── fetch-content.repo.test.ts
+        ├── fetch-content.web.test.ts
         ├── html-to-markdown.edge-cases.test.ts
         ├── html-to-markdown.test.ts
         ├── index.test.ts

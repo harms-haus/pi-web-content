@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { htmlToMarkdown, BINARY_TYPES } from "../html-to-markdown.js";
+import { BINARY_TYPES } from "../fetch-constants.js";
+import { htmlToMarkdown } from "../html-to-markdown.js";
 
 describe("htmlToMarkdown", () => {
   describe("simple HTML conversion", () => {

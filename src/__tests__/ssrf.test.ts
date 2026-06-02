@@ -372,11 +372,13 @@ describe("isBlockedByDns", () => {
     expect(await isBlockedByDns("internal-ipv6.example.com")).toBe(true);
   });
 
-  it("returns false when all DNS queries fail", async () => {
+  it("throws when all DNS queries fail", async () => {
     mockedResolve4.mockRejectedValue(new Error("SERVFAIL"));
     mockedResolve6.mockRejectedValue(new Error("SERVFAIL"));
 
-    expect(await isBlockedByDns("nonexistent.example.com")).toBe(false);
+    await expect(isBlockedByDns("unresolvable.example.com")).rejects.toThrow(
+      "could not resolve hostname",
+    );
   });
 
   it("checks both IPv4 and IPv6 results", async () => {
@@ -398,6 +400,20 @@ describe("isBlockedByDns", () => {
     mockedResolve6.mockRejectedValue(new Error("No records"));
 
     expect(await isBlockedByDns("zero.example.com")).toBe(true);
+  });
+
+  it("returns false when IPv4 fails but IPv6 succeeds with public IP", async () => {
+    mockedResolve4.mockRejectedValue(new Error("No records"));
+    mockedResolve6.mockResolvedValue(["2606:2800:220:1:248:1893:25c8:1946"]);
+
+    expect(await isBlockedByDns("ipv6-only.example.com")).toBe(false);
+  });
+
+  it("returns true when IPv4 fails but IPv6 resolves to private IP", async () => {
+    mockedResolve4.mockRejectedValue(new Error("No records"));
+    mockedResolve6.mockResolvedValue(["fd00::1"]);
+
+    expect(await isBlockedByDns("ipv6-private.example.com")).toBe(true);
   });
 
   it("returns false when IPv4 has invalid hex segment", async () => {

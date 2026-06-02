@@ -8,7 +8,8 @@ import {
   formatSize,
   truncateHead,
 } from "@earendil-works/pi-coding-agent";
-import { BINARY_TYPES, htmlToMarkdown } from "./html-to-markdown.js";
+import { BINARY_TYPES } from "./fetch-constants.js";
+import { htmlToMarkdown } from "./html-to-markdown.js";
 import {
   ACCEPT_HEADER,
   ACCEPT_LANGUAGE,
@@ -17,7 +18,7 @@ import {
   MAX_RESPONSE_BYTES,
   USER_AGENT,
 } from "./fetch-constants.js";
-import type { FetchContentDetails } from "./execute-repo-fetch.js";
+import type { FetchContentDetails, SummarizeUpdate } from "./types.js";
 import { validateRedirectForSsrf, validateUrlForSsrf } from "./ssrf.js";
 import { summarizeWithSubagent } from "./summarize.js";
 
@@ -191,12 +192,7 @@ export async function executeWebFetch(
       title,
       cwd: ctx.cwd,
       signal,
-      onUpdate: onUpdate as
-        | ((update: {
-            content: Array<{ type: string; text: string }>;
-            details: { status: string };
-          }) => void)
-        | undefined,
+      onUpdate: onUpdate as unknown as ((update: SummarizeUpdate) => void) | undefined,
     });
 
     return {

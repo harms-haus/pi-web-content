@@ -3,3 +3,7 @@ node_modules/
 .DS_Store
 .bifrost.yaml
 coverage/
+
+# Windows
+Thumbs.db
+Desktop.ini

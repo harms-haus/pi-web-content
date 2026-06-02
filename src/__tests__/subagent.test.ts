@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import type { Message, StopReason, Usage } from "@earendil-works/pi-ai";
 import type { ChildProcess } from "node:child_process";
@@ -68,7 +69,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       // Simulate stdout with a message_end event
       const message = createAssistantMessage("Hello from subagent");
@@ -90,7 +91,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       const msg1 = createAssistantMessage("First message");
       const msg2 = createAssistantMessage("Second message");
@@ -114,7 +115,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       const toolResult: Message = {
         role: "toolResult",
@@ -145,7 +146,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       const message = createAssistantMessage("Chunked response");
 
@@ -165,7 +166,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       const message = createAssistantMessage("No trailing newline");
 
@@ -182,7 +183,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       const message = createAssistantMessage("Valid message");
 
@@ -203,7 +204,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       const message = createAssistantMessage("Final output");
 
@@ -226,7 +227,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       proc.emit("close", 0);
       await resultPromise;
@@ -240,7 +241,7 @@ describe("subagent", () => {
           "--no-session",
           expect.stringContaining("test task"),
         ]),
-        { cwd: "/tmp", shell: false, stdio: ["ignore", "pipe", "pipe"] },
+        { cwd: tmpdir(), shell: false, stdio: ["ignore", "pipe", "pipe"] },
       );
     });
   });
@@ -252,7 +253,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       proc.stderr.emit("data", Buffer.from("Some error output\n"));
       proc.emit("close", 1);
@@ -269,7 +270,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       proc.emit("error", new Error("spawn ENOENT"));
 
@@ -284,7 +285,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       // First, fill stderr past the limit
       proc.stderr.emit("data", Buffer.from("x".repeat(70000)));
@@ -300,7 +301,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       // Fill stderr close to the limit
       proc.stderr.emit("data", Buffer.from("x".repeat(65000)));
@@ -317,7 +318,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       const message = createAssistantMessage("Partial output");
 
@@ -346,7 +347,7 @@ describe("subagent", () => {
       const controller = new AbortController();
       controller.abort();
 
-      const resultPromise = runSubagent("test task", "/tmp", controller.signal);
+      const resultPromise = runSubagent("test task", tmpdir(), controller.signal);
 
       // Process should be killed immediately
       vi.advanceTimersByTime(0);
@@ -364,7 +365,7 @@ describe("subagent", () => {
 
       const controller = new AbortController();
 
-      const resultPromise = runSubagent("test task", "/tmp", controller.signal);
+      const resultPromise = runSubagent("test task", tmpdir(), controller.signal);
 
       // Abort the signal
       controller.abort();
@@ -382,7 +383,7 @@ describe("subagent", () => {
 
       const controller = new AbortController();
 
-      const resultPromise = runSubagent("test task", "/tmp", controller.signal);
+      const resultPromise = runSubagent("test task", tmpdir(), controller.signal);
 
       controller.abort();
 
@@ -398,6 +399,36 @@ describe("subagent", () => {
       proc.emit("close", 1);
       await resultPromise;
     });
+
+    it("on Windows, kills process immediately without SIGKILL fallback", async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc);
+
+      const abortController = new AbortController();
+
+      const resultPromise = runSubagent("test task", tmpdir(), abortController.signal);
+
+      // Trigger abort
+      abortController.abort();
+
+      // Verify proc.kill was called once (no signal argument on Windows)
+      expect(proc.kill).toHaveBeenCalledTimes(1);
+      expect(proc.kill).toHaveBeenCalledWith();
+
+      // Advance timers and verify NO second kill call
+      vi.advanceTimersByTime(6000);
+      expect(proc.kill).toHaveBeenCalledTimes(1);
+
+      proc.emit("close", 1);
+      const result = await resultPromise;
+
+      expect(result.error).toBe("Subagent was aborted");
+
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    });
   });
 
   // --- Stderr capture ---
@@ -407,7 +438,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       proc.stderr.emit("data", Buffer.from("warning: some warning\n"));
       proc.emit("close", 0);
@@ -421,7 +452,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       proc.stderr.emit("data", Buffer.from("chunk1 "));
       proc.stderr.emit("data", Buffer.from("chunk2 "));
@@ -437,7 +468,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       // MAX_STDERR_LENGTH = 64 * 1024 = 65536
       // Send a chunk that exceeds the limit
@@ -453,7 +484,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
 
       // First chunk triggers truncation
       proc.stderr.emit("data", Buffer.from("x".repeat(70000)));
@@ -475,7 +506,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("my specific task", "/tmp");
+      const resultPromise = runSubagent("my specific task", tmpdir());
 
       proc.emit("close", 0);
       await resultPromise;
@@ -498,7 +529,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
       proc.emit("close", 0);
       await resultPromise;
 
@@ -533,7 +564,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
       proc.emit("close", 0);
       await resultPromise;
 
@@ -568,7 +599,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const resultPromise = runSubagent("test task", "/tmp");
+      const resultPromise = runSubagent("test task", tmpdir());
       proc.emit("close", 0);
       await resultPromise;
 
@@ -578,6 +609,90 @@ describe("subagent", () => {
         expect.any(Object),
       );
 
+      Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
+      Object.defineProperty(process, "argv", { value: originalArgv, configurable: true });
+    });
+
+    it("returns useShell: true on Windows for generic runtime fallback", async () => {
+      const originalPlatform = process.platform;
+      const originalExecPath = process.execPath;
+      const originalArgv = process.argv;
+      Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+      Object.defineProperty(process, "execPath", {
+        value: "C:/Program Files/nodejs/node.exe",
+        configurable: true,
+      });
+      Object.defineProperty(process, "argv", {
+        value: ["C:/Program Files/nodejs/node.exe", "C:/nonexistent/script.js"],
+        configurable: true,
+      });
+      const { existsSync } = await import("node:fs");
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc);
+
+      const resultPromise = runSubagent("test task", tmpdir());
+      proc.emit("close", 0);
+      await resultPromise;
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "pi",
+        expect.arrayContaining(["--mode", "json", "-p", "--no-session"]),
+        expect.objectContaining({ shell: true }),
+      );
+
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+      Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
+      Object.defineProperty(process, "argv", { value: originalArgv, configurable: true });
+    });
+
+    it("passes args as an array (not concatenated string) when shell is true", async () => {
+      // Security: When shell: true, args MUST be an array so that Node.js
+      // shell-escapes each argument individually. A single concatenated
+      // string would allow cmd.exe to interpret special characters in the
+      // task prompt (e.g. &, |, >).
+      const originalPlatform = process.platform;
+      const originalExecPath = process.execPath;
+      const originalArgv = process.argv;
+      Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+      Object.defineProperty(process, "execPath", {
+        value: "C:/Program Files/nodejs/node.exe",
+        configurable: true,
+      });
+      Object.defineProperty(process, "argv", {
+        value: ["C:/Program Files/nodejs/node.exe", "C:/nonexistent/script.js"],
+        configurable: true,
+      });
+      const { existsSync } = await import("node:fs");
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc);
+
+      const maliciousTask = 'task & echo PWNED | del /f important.txt > nul';
+      const resultPromise = runSubagent(maliciousTask, tmpdir());
+      proc.emit("close", 0);
+      await resultPromise;
+
+      // Verify the second argument to spawn is an actual Array
+      const spawnArgs = mockSpawn.mock.calls[0]![1] as unknown;
+      expect(Array.isArray(spawnArgs)).toBe(true);
+
+      // Verify shell: true was used
+      const spawnOpts = mockSpawn.mock.calls[0]![2] as { shell: boolean };
+      expect(spawnOpts.shell).toBe(true);
+
+      // The malicious task text should appear verbatim as a single array element,
+      // not split across multiple elements or concatenated into the command string.
+      const command = mockSpawn.mock.calls[0]![0] as string;
+      expect(command).toBe("pi"); // command is just "pi", not "pi <args>"
+
+      // The task prompt should be contained in one of the array args
+      const lastArg = (spawnArgs as string[])[(spawnArgs as string[]).length - 1]!;
+      expect(lastArg).toContain(maliciousTask);
+
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
       Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
       Object.defineProperty(process, "argv", { value: originalArgv, configurable: true });
     });

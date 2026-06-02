@@ -12,7 +12,7 @@ export const MAX_REDIRECTS = 10;
 
 /** User-Agent header for fetch requests */
 export const USER_AGENT =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+  "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
 /** Accept header for fetch requests */
 export const ACCEPT_HEADER =
@@ -20,3 +20,15 @@ export const ACCEPT_HEADER =
 
 /** Accept-Language header for fetch requests */
 export const ACCEPT_LANGUAGE = "en-US,en;q=0.9";
+
+/** MIME type prefixes/subtypes that indicate binary content (non-textual). */
+export const BINARY_TYPES = [
+  "image/",
+  "video/",
+  "audio/",
+  "application/pdf",
+  "application/zip",
+  "application/octet-stream",
+  "application/x-gzip",
+  "application/x-tar",
+];

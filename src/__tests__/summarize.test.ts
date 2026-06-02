@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
 import { summarizeWithSubagent } from "../summarize.js";
 
 // Mock the subagent module
@@ -31,7 +32,7 @@ describe("summarizeWithSubagent", () => {
       content: "some content",
       summarize: "extract key points",
       roleContext: "You are summarizing.",
-      cwd: "/tmp",
+      cwd: tmpdir(),
       onUpdate: (update) => {
         updates.push(update);
       },
@@ -51,7 +52,7 @@ describe("summarizeWithSubagent", () => {
       roleContext: "You are summarizing content from a web page.",
       url: "https://example.com",
       title: "Example Page",
-      cwd: "/tmp",
+      cwd: tmpdir(),
     });
 
     expect(mockedRunSubagent).toHaveBeenCalledTimes(1);
@@ -82,7 +83,7 @@ describe("summarizeWithSubagent", () => {
         content: "content",
         summarize: "summarize",
         roleContext: "role",
-        cwd: "/tmp",
+        cwd: tmpdir(),
       }),
     ).rejects.toThrow("Summarization failed: Subagent exited with code 1");
   });
@@ -98,7 +99,7 @@ describe("summarizeWithSubagent", () => {
       content: "content",
       summarize: "summarize",
       roleContext: "role",
-      cwd: "/tmp",
+      cwd: tmpdir(),
     });
 
     expect(result.summarized).toBe(true);
@@ -113,7 +114,7 @@ describe("summarizeWithSubagent", () => {
       content: "content",
       summarize: "summarize",
       roleContext: "role",
-      cwd: "/tmp",
+      cwd: tmpdir(),
     });
 
     const taskPrompt = mockedRunSubagent.mock.calls[0]![0];
@@ -127,7 +128,7 @@ describe("summarizeWithSubagent", () => {
       content: "content",
       summarize: "summarize",
       roleContext: "role",
-      cwd: "/tmp",
+      cwd: tmpdir(),
     });
 
     expect(result.content[0]!.text).toBe("(no summary produced)");
@@ -140,7 +141,7 @@ describe("summarizeWithSubagent", () => {
       content: "content",
       summarize: "summarize",
       roleContext: "role",
-      cwd: "/tmp",
+      cwd: tmpdir(),
     });
 
     const taskPrompt = mockedRunSubagent.mock.calls[0]![0];

@@ -41,7 +41,15 @@ Every new source module in `src/` must have a corresponding test file in `src/__
 
 ### Integration Changes
 
-Changes to the `fetch_content` tool's orchestration logic (routing between web fetch and git clone, SSRF validation flow, summarization delegation) must add test cases to `src/__tests__/fetch-content.test.ts`.
+Changes to the `fetch_content` tool's orchestration logic must add test cases to the appropriate file:
+
+| Area | Test File |
+|------|-----------|
+| Web fetch routing, SSRF validation flow | `src/__tests__/fetch-content.web.test.ts` |
+| Git clone routing, repo detection | `src/__tests__/fetch-content.repo.test.ts` |
+| Repo fetch execution (shallow clone, branch checkout) | `src/__tests__/execute-repo-fetch.test.ts` |
+| Web fetch execution (HTTP requests, content conversion) | `src/__tests__/execute-web-fetch.test.ts` |
+| Shared constants (URL patterns, limits) | `src/__tests__/fetch-constants.test.ts` |
 
 ### Bug Fixes
 
@@ -87,7 +95,8 @@ describe("myFunction", () => {
 
 - **PR title** should clearly describe the change (e.g., `fix: handle redirect loops in SSRF validation`).
 - **PR description** must reference related issues (e.g., `Fixes #12`).
-- **All CI checks must pass** — typecheck, ESLint, and tests.
+- **All CI checks must pass** — typecheck, ESLint, and tests. CI runs on **ubuntu-latest** and **windows-latest** with Node 22 and Node 24.
+- **Cross-platform compatibility.** Ensure your code works on both Linux and Windows. Avoid platform-specific assumptions in file paths (use `path.join`/`path.resolve`), shell commands, and environment variables.
 - **CHANGELOG.md** — add a summary of your changes under the `Unreleased` section. If no `Unreleased` section exists, create one at the top. Use the format:
   ```markdown
   ## Unreleased

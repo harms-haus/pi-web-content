@@ -93,6 +93,7 @@ export function isRepoUrl(url: string): RepoUrlResult {
   try {
     parsed = new URL(url);
   } catch {
+    // URL is not parseable — treat as non-repo URL, default to web fetch.
     return { isRepo: false, scheme: "https" };
   }
 

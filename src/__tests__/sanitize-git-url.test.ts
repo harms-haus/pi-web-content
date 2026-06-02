@@ -103,10 +103,9 @@ describe("sanitizeGitUrl", () => {
     );
   });
 
-  it("rejects percent as disallowed character", () => {
-    expect(() => sanitizeGitUrl("https://github.com/owner/%20repo")).toThrow(
-      "disallowed characters",
-    );
+  it("passes URL with percent-encoded space", () => {
+    const url = "https://github.com/owner/repo%20name";
+    expect(sanitizeGitUrl(url)).toBe(url);
   });
 
   // --- Credential stripping tests ---
