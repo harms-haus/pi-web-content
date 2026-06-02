@@ -670,7 +670,7 @@ describe("subagent", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc);
 
-      const maliciousTask = 'task & echo PWNED | del /f important.txt > nul';
+      const maliciousTask = "task & echo PWNED | del /f important.txt > nul";
       const resultPromise = runSubagent(maliciousTask, tmpdir());
       proc.emit("close", 0);
       await resultPromise;

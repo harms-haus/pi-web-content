@@ -28,10 +28,8 @@ vi.mock("../fetch-constants.js", () => ({
   FETCH_TIMEOUT_MS: 30_000,
   MAX_RESPONSE_BYTES: 10 * 1024 * 1024,
   MAX_REDIRECTS: 10,
-  USER_AGENT:
-    "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-  ACCEPT_HEADER:
-    "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8",
+  USER_AGENT: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+  ACCEPT_HEADER: "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8",
   ACCEPT_LANGUAGE: "en-US,en;q=0.9",
   BINARY_TYPES: [
     "image/",
@@ -195,7 +193,12 @@ describe("executeWebFetch", () => {
     );
 
     await expect(
-      executeWebFetch({ url: "https://example.com/image.png" }, undefined, undefined, createContext()),
+      executeWebFetch(
+        { url: "https://example.com/image.png" },
+        undefined,
+        undefined,
+        createContext(),
+      ),
     ).rejects.toThrow("Unsupported content type");
   });
 
@@ -228,12 +231,7 @@ describe("executeWebFetch", () => {
     );
 
     await expect(
-      executeWebFetch(
-        { url: "https://example.com/error" },
-        undefined,
-        undefined,
-        createContext(),
-      ),
+      executeWebFetch({ url: "https://example.com/error" }, undefined, undefined, createContext()),
     ).rejects.toThrow("HTTP 500 Internal Server Error");
   });
 
@@ -314,12 +312,7 @@ describe("executeWebFetch", () => {
     });
 
     await expect(
-      executeWebFetch(
-        { url: "https://example.com/large" },
-        undefined,
-        undefined,
-        createContext(),
-      ),
+      executeWebFetch({ url: "https://example.com/large" }, undefined, undefined, createContext()),
     ).rejects.toThrow(/Response body exceeds maximum size/);
   });
 
@@ -381,12 +374,7 @@ describe("executeWebFetch", () => {
   it("calls validateUrlForSsrf with the provided URL", async () => {
     mockFetch.mockResolvedValueOnce(createMockResponse());
 
-    await executeWebFetch(
-      { url: "https://example.com/" },
-      undefined,
-      undefined,
-      createContext(),
-    );
+    await executeWebFetch({ url: "https://example.com/" }, undefined, undefined, createContext());
 
     expect(ssrf.validateUrlForSsrf).toHaveBeenCalledWith("https://example.com/");
   });
@@ -397,12 +385,7 @@ describe("executeWebFetch", () => {
     );
 
     await expect(
-      executeWebFetch(
-        { url: "http://localhost:3000/" },
-        undefined,
-        undefined,
-        createContext(),
-      ),
+      executeWebFetch({ url: "http://localhost:3000/" }, undefined, undefined, createContext()),
     ).rejects.toThrow("Blocked: cannot fetch internal/private addresses");
   });
 
@@ -410,24 +393,14 @@ describe("executeWebFetch", () => {
     mockFetch.mockRejectedValueOnce(new Error("Network error"));
 
     await expect(
-      executeWebFetch(
-        { url: "https://example.com/" },
-        undefined,
-        undefined,
-        createContext(),
-      ),
+      executeWebFetch({ url: "https://example.com/" }, undefined, undefined, createContext()),
     ).rejects.toThrow("Failed to fetch https://example.com/: Network error");
   });
 
   it("sends correct request headers", async () => {
     mockFetch.mockResolvedValueOnce(createMockResponse());
 
-    await executeWebFetch(
-      { url: "https://example.com/" },
-      undefined,
-      undefined,
-      createContext(),
-    );
+    await executeWebFetch({ url: "https://example.com/" }, undefined, undefined, createContext());
 
     expect(mockFetch).toHaveBeenCalledWith(
       "https://example.com/",
@@ -448,12 +421,7 @@ describe("executeWebFetch", () => {
     mockFetch.mockResolvedValueOnce(createMockResponse());
     const onUpdate = vi.fn();
 
-    await executeWebFetch(
-      { url: "https://example.com/" },
-      undefined,
-      onUpdate,
-      createContext(),
-    );
+    await executeWebFetch({ url: "https://example.com/" }, undefined, onUpdate, createContext());
 
     expect(onUpdate).toHaveBeenCalledWith(
       expect.objectContaining({

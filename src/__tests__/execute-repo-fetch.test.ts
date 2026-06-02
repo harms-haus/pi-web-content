@@ -146,7 +146,17 @@ describe("executeRepoFetch", () => {
 
     expect(mockExec).toHaveBeenCalledWith(
       "git",
-      ["clone", "--depth", "1", "--single-branch", "--branch", "develop", "--", "https://github.com/owner/repo", expect.stringContaining("repository-owner")],
+      [
+        "clone",
+        "--depth",
+        "1",
+        "--single-branch",
+        "--branch",
+        "develop",
+        "--",
+        "https://github.com/owner/repo",
+        expect.stringContaining("repository-owner"),
+      ],
       expect.objectContaining({ signal: undefined, timeout: 120_000 }),
     );
     expect(result.details.branch).toBe("develop");

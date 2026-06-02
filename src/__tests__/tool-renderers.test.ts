@@ -83,7 +83,12 @@ describe("renderToolResult", () => {
   });
 
   it("shows ✗ for error", () => {
-    const result = renderToolResult({ isError: true }, {} as FetchContentDetails, { isPartial: false }, theme);
+    const result = renderToolResult(
+      { isError: true },
+      {} as FetchContentDetails,
+      { isPartial: false },
+      theme,
+    );
     expect(result).toContain("✗");
   });
 
@@ -116,7 +121,12 @@ describe("renderToolResult", () => {
   });
 
   it("shows title from details", () => {
-    const result = renderToolResult({}, { title: "My Page Title" } as FetchContentDetails, { isPartial: false }, theme);
+    const result = renderToolResult(
+      {},
+      { title: "My Page Title" } as FetchContentDetails,
+      { isPartial: false },
+      theme,
+    );
     expect(result).toContain("My Page Title");
   });
 

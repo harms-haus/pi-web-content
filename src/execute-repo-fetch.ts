@@ -68,9 +68,7 @@ export async function executeRepoFetch(
   // Windows reserved device name protection (applies on all platforms)
   const WINDOWS_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i;
   if (WINDOWS_RESERVED.test(owner) || WINDOWS_RESERVED.test(repo)) {
-    throw new Error(
-      `Invalid repository owner or name: reserved device name on Windows.`,
-    );
+    throw new Error(`Invalid repository owner or name: reserved device name on Windows.`);
   }
 
   const targetPath = path.join(tmpdir(), `repository-${owner}`, repo);
@@ -150,9 +148,7 @@ export async function executeRepoFetch(
         throw err;
       }
     }
-    throw new Error(
-      `git clone failed for ${owner}/${repo}. Exit code: ${result.code}.`,
-    );
+    throw new Error(`git clone failed for ${owner}/${repo}. Exit code: ${result.code}.`);
   }
 
   // Summarization

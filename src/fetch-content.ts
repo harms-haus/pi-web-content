@@ -105,35 +105,23 @@ export function createFetchContentTool(pi: ExtensionAPI) {
       const details = result.details;
       // Repo result
       if (details?.type === "repo") {
-        const text = renderToolResult(
-          result,
-          details,
-          { isPartial },
-          theme,
-          {
-            showOwnerRepo:
-              details.owner && details.repo
-                ? { owner: details.owner, repo: details.repo }
-                : undefined,
-            showSummarized: details.summarized,
-            showTargetPath: details.targetPath,
-          },
-        );
+        const text = renderToolResult(result, details, { isPartial }, theme, {
+          showOwnerRepo:
+            details.owner && details.repo
+              ? { owner: details.owner, repo: details.repo }
+              : undefined,
+          showSummarized: details.summarized,
+          showTargetPath: details.targetPath,
+        });
         return new Text(text, 0, 0);
       }
       // Web result (default)
-      const text = renderToolResult(
-        result,
-        details,
-        { isPartial },
-        theme,
-        {
-          showUrl: details?.url,
-          showTruncated: details?.truncated,
-          showSummarized: details?.summarized,
-          showContentLength: details?.contentLength,
-        },
-      );
+      const text = renderToolResult(result, details, { isPartial }, theme, {
+        showUrl: details?.url,
+        showTruncated: details?.truncated,
+        showSummarized: details?.summarized,
+        showContentLength: details?.contentLength,
+      });
       return new Text(text, 0, 0);
     },
   };
