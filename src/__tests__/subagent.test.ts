@@ -232,6 +232,7 @@ describe("subagent", () => {
       proc.emit("close", 0);
       await resultPromise;
 
+      const expectedShell = process.platform === "win32" ? true : false;
       expect(mockSpawn).toHaveBeenCalledWith(
         expect.any(String),
         expect.arrayContaining([
@@ -241,7 +242,7 @@ describe("subagent", () => {
           "--no-session",
           expect.stringContaining("test task"),
         ]),
-        { cwd: tmpdir(), shell: false, stdio: ["ignore", "pipe", "pipe"] },
+        { cwd: tmpdir(), shell: expectedShell, stdio: ["ignore", "pipe", "pipe"] },
       );
     });
   });
@@ -387,14 +388,19 @@ describe("subagent", () => {
 
       controller.abort();
 
-      // First SIGTERM should be sent
-      expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
+      if (process.platform === "win32") {
+        // On Windows, proc.kill() is called with no arguments
+        expect(proc.kill).toHaveBeenCalledWith();
+      } else {
+        // First SIGTERM should be sent
+        expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
 
-      // Advance time past the 5 second delay
-      vi.advanceTimersByTime(5000);
+        // Advance time past the 5 second delay
+        vi.advanceTimersByTime(5000);
 
-      // SIGKILL should be sent
-      expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
+        // SIGKILL should be sent
+        expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
+      }
 
       proc.emit("close", 1);
       await resultPromise;
