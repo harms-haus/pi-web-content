@@ -31,6 +31,9 @@ vi.mock("@mozilla/readability", () => ({
 }));
 
 vi.mock("jsdom", () => ({
+  VirtualConsole: class {
+    on() { return this; }
+  },
   JSDOM: class {
     window: {
       document: {

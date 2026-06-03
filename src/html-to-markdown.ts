@@ -25,10 +25,12 @@ interface HtmlToMarkdownResult {
 }
 
 export async function htmlToMarkdown(html: string, url: string): Promise<HtmlToMarkdownResult> {
-  const { JSDOM } = await import("jsdom");
+  const { JSDOM, VirtualConsole } = await import("jsdom");
   const { Readability } = await import("@mozilla/readability");
 
-  const dom = new JSDOM(html, { url });
+  const virtualConsole = new VirtualConsole();
+
+  const dom = new JSDOM(html, { url, virtualConsole });
   const reader = new Readability(dom.window.document);
   const article = reader.parse();
 
